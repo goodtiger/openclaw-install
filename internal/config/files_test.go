@@ -8,6 +8,12 @@ import (
 func TestApplyManagedConfigPreservesUnknownAndReplacesManagedEntries(t *testing.T) {
 	existing := map[string]any{
 		"custom": "keep-me",
+		"meta": map[string]any{
+			"installer": map[string]any{
+				"name":    "openclaw-install",
+				"version": "0.1.0",
+			},
+		},
 		"channels": map[string]any{
 			"telegram": map[string]any{"enabled": true},
 			"qq":       map[string]any{"enabled": true, "legacy": true},
@@ -23,7 +29,7 @@ func TestApplyManagedConfigPreservesUnknownAndReplacesManagedEntries(t *testing.
 	input := ManagedConfigInput{
 		InstallerVersion: "0.1.0",
 		Mode:             "native",
-		GatewayBind:      "127.0.0.1",
+		GatewayBind:      "loopback",
 		BridgeHost:       "127.0.0.1",
 		ManagedAt:        time.Unix(1700000000, 0),
 		MirrorNames:      map[string]string{"npm_registry": "npmmirror"},
@@ -83,13 +89,19 @@ func TestApplyManagedConfigPreservesUnknownAndReplacesManagedEntries(t *testing.
 	if _, ok := providers["deepseek"]; !ok {
 		t.Fatal("expected deepseek provider to be added")
 	}
+
+	if meta, ok := merged["meta"].(map[string]any); ok {
+		if _, ok := meta["installer"]; ok {
+			t.Fatal("expected legacy meta.installer to be removed from merged config")
+		}
+	}
 }
 
 func TestBuildManagedConfigBailianDefaultsAndSkipsPluginChannels(t *testing.T) {
 	input := ManagedConfigInput{
 		InstallerVersion: "0.1.0",
 		Mode:             "native",
-		GatewayBind:      "127.0.0.1",
+		GatewayBind:      "loopback",
 		BridgeHost:       "127.0.0.1",
 		ManagedAt:        time.Unix(1700000000, 0),
 		MirrorNames:      map[string]string{"npm_registry": "npmmirror"},
@@ -158,9 +170,18 @@ func TestBuildManagedConfigBailianDefaultsAndSkipsPluginChannels(t *testing.T) {
 		t.Fatalf("unexpected primary model: %#v", model["primary"])
 	}
 
+	gateway := managed["gateway"].(map[string]any)
+	if gateway["bind"] != "loopback" {
+		t.Fatalf("unexpected gateway bind: %#v", gateway["bind"])
+	}
+
 	agentModels := defaults["models"].(map[string]any)
 	if _, ok := agentModels["bailian/qwen3-coder-plus"]; !ok {
 		t.Fatal("expected bailian/qwen3-coder-plus to be available in agents.defaults.models")
+	}
+
+	if meta, ok := managed["meta"]; ok {
+		t.Fatalf("unexpected meta block in managed config: %#v", meta)
 	}
 
 	channels := managed["channels"].(map[string]any)

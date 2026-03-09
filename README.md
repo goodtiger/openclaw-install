@@ -324,13 +324,13 @@ scripts/build-release.sh linux/amd64 darwin/arm64 windows/amd64
 
 这是 OpenClaw 主配置文件。安装器会写入或更新这些内容：
 
-- `meta.installer`
 - `gateway.port`
 - `gateway.bind`
-- `models.primary`
-- `models.fallbacks`
 - `models.providers`
+- `models.mode`
 - `channels`
+- `agents.defaults.model.primary`
+- `agents.defaults.models`
 
 安装器不会粗暴覆盖整个文件，而是使用“增量合并”的方式处理：
 
@@ -338,6 +338,11 @@ scripts/build-release.sh linux/amd64 darwin/arm64 windows/amd64
 - 保留未由安装器管理的自定义配置
 - 删除上一轮由安装器托管的 provider
 - 删除上一轮由安装器托管的 channel
+
+其中 `gateway.bind` 会按新版 OpenClaw 配置写成：
+
+- `loopback`，对应 Native 模式
+- `lan`，对应 Docker 模式
 - 写入这一次新的 provider 和 channel
 
 这意味着你手动加的其他配置通常会保留下来。
@@ -547,7 +552,8 @@ ls ~/.openclaw
 Native 模式可以先试：
 
 ```bash
-openclaw version
+openclaw --version
+openclaw config validate
 ```
 
 Docker 模式可以这样验证 compose 配置：

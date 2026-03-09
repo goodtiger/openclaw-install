@@ -149,17 +149,6 @@ func BuildManagedConfig(input ManagedConfigInput) map[string]any {
 	}
 
 	return map[string]any{
-		"meta": map[string]any{
-			"installer": map[string]any{
-				"name":          "openclaw-install",
-				"version":       input.InstallerVersion,
-				"mode":          input.Mode,
-				"managedAt":     input.ManagedAt.UTC().Format(time.RFC3339),
-				"managedKeys":   []string{"meta.installer", "gateway.bind", "gateway.port", "gateway.mode", "models.providers", "agents.defaults.model.primary", "agents.defaults.models", "channels"},
-				"mirrorNames":   input.MirrorNames,
-				"managedDriver": "hybrid",
-			},
-		},
 		"gateway": map[string]any{
 			"port": DefaultGatewayPort,
 			"bind": input.GatewayBind,
@@ -210,6 +199,7 @@ func BuildBridgeConfig(input ManagedConfigInput) BridgeConfig {
 
 func ApplyManagedConfig(existing, managed map[string]any, previous InstallState) map[string]any {
 	base := cloneMap(existing)
+	deleteNestedKey(base, []string{"meta", "installer"})
 
 	if previous.ManagedProviderID != "" {
 		deleteNestedKey(base, []string{"models", "providers", previous.ManagedProviderID})

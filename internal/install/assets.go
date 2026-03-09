@@ -2,6 +2,7 @@ package install
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -47,6 +48,7 @@ func (w *Workflow) writeAssets(ctx context.Context, info system.Info, req Reques
 		if !usesBridgeProvisioner(channel.Provisioner) {
 			continue
 		}
+		w.progressDetailf("Preparing bridge assets for %s", channel.Name)
 		scriptPath, err := writeBridgeScript(info, binaryPath, channel.ID)
 		if err != nil {
 			return warnings, err
@@ -181,19 +183,66 @@ func (w *Workflow) cleanupObsoleteChannelAssets(ctx context.Context, info system
 
 		switch info.OS {
 		case "linux":
-			if system.HasCommand("systemctl") {
-				_ = w.Executor.Run(ctx, "systemctl", []string{"--user", "disable", "--now", "openclaw-bridge-" + channelID + ".service"}, nil, "", stdout, stderr)
+			if err := w.cleanupSystemdUserService(ctx, info, channelID, stdout, stderr); err != nil {
+				return err
 			}
-			_ = os.Remove(filepath.Join(info.HomeDir, ".config", "systemd", "user", "openclaw-bridge-"+channelID+".service"))
 		case "darwin":
-			plistPath := filepath.Join(info.HomeDir, "Library", "LaunchAgents", "ai.openclaw.bridge."+channelID+".plist")
-			if system.HasCommand("launchctl") {
-				_ = w.Executor.Run(ctx, "launchctl", []string{"unload", plistPath}, nil, "", stdout, stderr)
+			if err := w.cleanupLaunchdService(ctx, info, channelID, stdout, stderr); err != nil {
+				return err
 			}
-			_ = os.Remove(plistPath)
 		}
 
-		_ = os.Remove(filepath.Join(info.RuntimeDir, "bridge-"+channelID+scriptExtension()))
+		scriptPath := filepath.Join(info.RuntimeDir, "bridge-"+channelID+scriptExtension())
+		if err := os.Remove(scriptPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (w *Workflow) cleanupSystemdUserService(ctx context.Context, info system.Info, channelID string, stdout, stderr io.Writer) error {
+	serviceName := "openclaw-bridge-" + channelID + ".service"
+	servicePath := filepath.Join(info.HomeDir, ".config", "systemd", "user", serviceName)
+
+	if _, err := os.Stat(servicePath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+
+	if system.HasCommand("systemctl") {
+		_ = w.runCommand(ctx, "systemctl", []string{"--user", "disable", "--now", serviceName}, nil, "", stdout, stderr)
+	}
+
+	if err := os.Remove(servicePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	if system.HasCommand("systemctl") {
+		_ = w.runCommand(ctx, "systemctl", []string{"--user", "daemon-reload"}, nil, "", stdout, stderr)
+	}
+
+	return nil
+}
+
+func (w *Workflow) cleanupLaunchdService(ctx context.Context, info system.Info, channelID string, stdout, stderr io.Writer) error {
+	plistPath := filepath.Join(info.HomeDir, "Library", "LaunchAgents", "ai.openclaw.bridge."+channelID+".plist")
+
+	if _, err := os.Stat(plistPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+
+	if system.HasCommand("launchctl") {
+		_ = w.runCommand(ctx, "launchctl", []string{"unload", plistPath}, nil, "", stdout, stderr)
+	}
+
+	if err := os.Remove(plistPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 
 	return nil
@@ -231,11 +280,11 @@ WantedBy=default.target
 		return warnings, err
 	}
 
-	if err := w.Executor.Run(ctx, "systemctl", []string{"--user", "daemon-reload"}, nil, "", stdout, stderr); err != nil {
+	if err := w.runCommand(ctx, "systemctl", []string{"--user", "daemon-reload"}, nil, "", stdout, stderr); err != nil {
 		warnings = append(warnings, "failed to reload systemd user daemon; bridge service file is still available")
 		return warnings, nil
 	}
-	if err := w.Executor.Run(ctx, "systemctl", []string{"--user", "enable", "--now", serviceName}, nil, "", stdout, stderr); err != nil {
+	if err := w.runCommand(ctx, "systemctl", []string{"--user", "enable", "--now", serviceName}, nil, "", stdout, stderr); err != nil {
 		warnings = append(warnings, "failed to start systemd user service; start it manually with systemctl --user enable --now "+serviceName)
 	}
 	return warnings, nil
@@ -284,8 +333,8 @@ func (w *Workflow) registerLaunchdService(ctx context.Context, info system.Info,
 		return warnings, err
 	}
 
-	_ = w.Executor.Run(ctx, "launchctl", []string{"unload", plistPath}, nil, "", stdout, stderr)
-	if err := w.Executor.Run(ctx, "launchctl", []string{"load", plistPath}, nil, "", stdout, stderr); err != nil {
+	_ = w.runCommand(ctx, "launchctl", []string{"unload", plistPath}, nil, "", stdout, stderr)
+	if err := w.runCommand(ctx, "launchctl", []string{"load", plistPath}, nil, "", stdout, stderr); err != nil {
 		warnings = append(warnings, "failed to load launchd agent; run `launchctl load "+plistPath+"` manually")
 	}
 	return warnings, nil

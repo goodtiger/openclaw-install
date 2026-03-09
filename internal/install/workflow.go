@@ -63,6 +63,7 @@ type Workflow struct {
 	Executor   Executor
 	HTTPClient *http.Client
 	Now        func() time.Time
+	progress   *progressTracker
 }
 
 func NewWorkflow(bundle presets.Bundle, executor Executor) *Workflow {
@@ -84,6 +85,32 @@ func (RealExecutor) Run(ctx context.Context, cmd string, args []string, env map[
 	command.Stderr = stderr
 	command.Env = append(os.Environ(), flattenEnv(env)...)
 	return command.Run()
+}
+
+func (w *Workflow) beginProgress(out io.Writer, req Request) func() {
+	w.progress = newProgressTracker(out, installStepCount(req))
+	return func() {
+		w.progress = nil
+	}
+}
+
+func (w *Workflow) progressStep(title string) {
+	if w.progress != nil {
+		w.progress.Step(title)
+	}
+}
+
+func (w *Workflow) progressDetailf(format string, args ...any) {
+	if w.progress != nil {
+		w.progress.Detailf(format, args...)
+	}
+}
+
+func (w *Workflow) runCommand(ctx context.Context, cmd string, args []string, env map[string]string, dir string, stdout, stderr io.Writer) error {
+	if w.progress != nil {
+		w.progress.Command(cmd, args)
+	}
+	return w.Executor.Run(ctx, cmd, args, env, dir, stdout, stderr)
 }
 
 func (w *Workflow) Doctor(ctx context.Context, info system.Info) (DoctorReport, error) {
@@ -109,6 +136,10 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 	if err := req.Validate(info); err != nil {
 		return Result{}, err
 	}
+	resetProgress := w.beginProgress(stdout, req)
+	defer resetProgress()
+
+	w.progressStep("Preparing workspace")
 
 	if err := config.EnsureDir(info.OpenClawHome); err != nil {
 		return Result{}, err
@@ -126,10 +157,22 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 		return Result{}, err
 	}
 	result.BackupFile = backupFile
+	if backupFile != "" {
+		w.progressDetailf("Existing config backed up to %s", backupFile)
+	}
+
+	w.progressStep("Resolving mirrors")
 
 	mirrors, mirrorWarnings := w.ResolveMirrors(ctx)
 	result.MirrorNames = mirrorNames(mirrors)
 	result.Warnings = append(result.Warnings, mirrorWarnings...)
+	if len(result.MirrorNames) == 0 {
+		w.progressDetailf("No mirror categories defined; using built-in defaults")
+	} else {
+		for _, key := range sortedStringMapKeys(result.MirrorNames) {
+			w.progressDetailf("%s: %s", key, result.MirrorNames[key])
+		}
+	}
 
 	previousState, err := config.LoadInstallState(info.StatePath)
 	if err != nil {
@@ -153,19 +196,25 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 	}
 	managedConfig := config.BuildManagedConfig(input)
 	finalConfig := config.ApplyManagedConfig(existingConfig, managedConfig, previousState)
+
+	w.progressStep("Writing configuration files")
 	if err := config.SaveJSONAtomic(info.ConfigPath, finalConfig); err != nil {
 		return Result{}, err
 	}
+	w.progressDetailf("OpenClaw config -> %s", info.ConfigPath)
 
 	if err := config.SaveJSONAtomic(info.BridgeConfigPath, config.BuildBridgeConfig(input)); err != nil {
 		return Result{}, err
 	}
+	w.progressDetailf("Bridge config -> %s", info.BridgeConfigPath)
 
+	w.progressStep("Generating runtime assets")
 	assetWarnings, err := w.writeAssets(ctx, info, req, previousState, mirrors, stdout, stderr)
 	if err != nil {
 		return Result{}, err
 	}
 	result.Warnings = append(result.Warnings, assetWarnings...)
+	w.progressDetailf("Runtime assets -> %s", info.RuntimeDir)
 
 	state := config.InstallState{
 		Version:           req.AppVersion,
@@ -179,19 +228,28 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 		ConfigPath:        info.ConfigPath,
 		BridgeConfigPath:  info.BridgeConfigPath,
 	}
+
+	w.progressStep("Saving installer state")
 	if err := config.SaveInstallState(info.StatePath, state); err != nil {
 		return Result{}, err
 	}
+	w.progressDetailf("Install state -> %s", info.StatePath)
 
 	if !req.SkipInstall {
+		w.progressStep("Installing dependencies")
 		if err := w.installDependencies(ctx, info, req.Mode, stdout, stderr); err != nil {
 			return result, err
 		}
+		w.progressStep("Installing OpenClaw runtime")
 		if err := w.installOpenClaw(ctx, info, req.Mode, mirrors, stdout, stderr); err != nil {
 			return result, err
 		}
 	}
 
+	w.progressStep("Configuring channels")
+	if len(req.Channels) == 0 {
+		w.progressDetailf("No channels selected")
+	}
 	channelWarnings, err := w.syncChannels(ctx, info, req, previousState, stdout, stderr)
 	result.Warnings = append(result.Warnings, channelWarnings...)
 	if err != nil {
@@ -199,6 +257,7 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 	}
 
 	if !req.SkipVerify {
+		w.progressStep("Verifying installation")
 		verifyWarnings, err := w.verify(ctx, info, req, stdout, stderr)
 		result.Warnings = append(result.Warnings, verifyWarnings...)
 		if err != nil {
@@ -280,16 +339,23 @@ func (w *Workflow) verify(ctx context.Context, info system.Info, req Request, st
 			return warnings, err
 		}
 		args = append(args, "-f", filepath.Join(info.RuntimeDir, "compose.yaml"), "config")
-		if err := w.Executor.Run(ctx, cmd, args, nil, info.RuntimeDir, stdout, stderr); err != nil {
+		if err := w.runCommand(ctx, cmd, args, nil, info.RuntimeDir, stdout, stderr); err != nil {
 			return warnings, fmt.Errorf("docker compose verify failed: %w", err)
 		}
+	}
+
+	switch req.Mode {
 	case ModeNative:
 		if system.HasCommand("openclaw") {
-			if err := w.Executor.Run(ctx, "openclaw", []string{"version"}, nil, "", stdout, stderr); err != nil {
-				return warnings, fmt.Errorf("openclaw verify failed: %w", err)
+			if err := w.runCommand(ctx, "openclaw", []string{"config", "validate"}, nil, "", stdout, stderr); err != nil {
+				return warnings, fmt.Errorf("openclaw config validate failed: %w", err)
 			}
 		} else {
 			warnings = append(warnings, "openclaw executable is not on PATH yet; restart the shell before retrying")
+		}
+	case ModeDocker:
+		if err := w.runOpenClawCommand(ctx, info, req.Mode, []string{"config", "validate"}, stdout, stderr); err != nil {
+			return warnings, fmt.Errorf("openclaw config validate failed: %w", err)
 		}
 	}
 
@@ -305,6 +371,7 @@ func (w *Workflow) verify(ctx context.Context, info system.Info, req Request, st
 
 func (w *Workflow) ensureDocker(ctx context.Context, info system.Info, stdout, stderr io.Writer) error {
 	if info.HasDocker && info.HasCompose {
+		w.progressDetailf("Docker and docker compose are already available")
 		return nil
 	}
 
@@ -325,11 +392,11 @@ func (w *Workflow) ensureDocker(ctx context.Context, info system.Info, stdout, s
 			return err
 		}
 	case "brew":
-		if err := w.Executor.Run(ctx, "brew", []string{"install", "--cask", "docker"}, nil, "", stdout, stderr); err != nil {
+		if err := w.runCommand(ctx, "brew", []string{"install", "--cask", "docker"}, nil, "", stdout, stderr); err != nil {
 			return err
 		}
 	case "winget":
-		if err := w.Executor.Run(ctx, "winget", []string{"install", "-e", "--id", "Docker.DockerDesktop"}, nil, "", stdout, stderr); err != nil {
+		if err := w.runCommand(ctx, "winget", []string{"install", "-e", "--id", "Docker.DockerDesktop"}, nil, "", stdout, stderr); err != nil {
 			return err
 		}
 	default:
@@ -344,6 +411,7 @@ func (w *Workflow) ensureDocker(ctx context.Context, info system.Info, stdout, s
 
 func (w *Workflow) ensureNode(ctx context.Context, info system.Info, stdout, stderr io.Writer) error {
 	if info.HasNode && info.HasNPM {
+		w.progressDetailf("Node.js and npm are already available")
 		return nil
 	}
 
@@ -364,11 +432,11 @@ func (w *Workflow) ensureNode(ctx context.Context, info system.Info, stdout, std
 			return err
 		}
 	case "brew":
-		if err := w.Executor.Run(ctx, "brew", []string{"install", "node"}, nil, "", stdout, stderr); err != nil {
+		if err := w.runCommand(ctx, "brew", []string{"install", "node"}, nil, "", stdout, stderr); err != nil {
 			return err
 		}
 	case "winget":
-		if err := w.Executor.Run(ctx, "winget", []string{"install", "-e", "--id", "OpenJS.NodeJS.LTS"}, nil, "", stdout, stderr); err != nil {
+		if err := w.runCommand(ctx, "winget", []string{"install", "-e", "--id", "OpenJS.NodeJS.LTS"}, nil, "", stdout, stderr); err != nil {
 			return err
 		}
 	default:
@@ -384,7 +452,7 @@ func (w *Workflow) installDockerMode(ctx context.Context, info system.Info, stdo
 		return err
 	}
 	args = append(args, "-f", filepath.Join(info.RuntimeDir, "compose.yaml"), "up", "-d", "--build")
-	return w.Executor.Run(ctx, cmd, args, nil, info.RuntimeDir, stdout, stderr)
+	return w.runCommand(ctx, cmd, args, nil, info.RuntimeDir, stdout, stderr)
 }
 
 func (w *Workflow) installNativeMode(ctx context.Context, info system.Info, mirrors MirrorSelection, stdout, stderr io.Writer) error {
@@ -392,21 +460,24 @@ func (w *Workflow) installNativeMode(ctx context.Context, info system.Info, mirr
 		"NPM_CONFIG_REGISTRY": mirrors["npm_registry"].BaseURL,
 	}
 	if !info.HasOpenClaw {
-		if err := w.Executor.Run(ctx, "npm", []string{"install", "-g", "openclaw"}, env, "", stdout, stderr); err != nil {
+		if err := w.runCommand(ctx, "npm", []string{"install", "-g", "openclaw"}, env, "", stdout, stderr); err != nil {
 			return err
 		}
+	} else {
+		w.progressDetailf("OpenClaw is already installed; skipping npm global install")
 	}
 	if system.HasCommand("openclaw") {
-		return w.Executor.Run(ctx, "openclaw", []string{"gateway", "start"}, nil, "", stdout, stderr)
+		return w.runCommand(ctx, "openclaw", []string{"gateway", "start"}, nil, "", stdout, stderr)
 	}
+	w.progressDetailf("OpenClaw command is not on PATH yet; gateway start was skipped in this shell")
 	return nil
 }
 
 func (w *Workflow) runPrivileged(ctx context.Context, info system.Info, cmd string, args []string, env map[string]string, dir string, stdout, stderr io.Writer) error {
 	if info.OS == "windows" || info.Elevated || !system.HasCommand("sudo") {
-		return w.Executor.Run(ctx, cmd, args, env, dir, stdout, stderr)
+		return w.runCommand(ctx, cmd, args, env, dir, stdout, stderr)
 	}
-	return w.Executor.Run(ctx, "sudo", append([]string{cmd}, args...), env, dir, stdout, stderr)
+	return w.runCommand(ctx, "sudo", append([]string{cmd}, args...), env, dir, stdout, stderr)
 }
 
 func recommendedMode(info system.Info) Mode {
@@ -434,9 +505,9 @@ func mirrorNames(selection MirrorSelection) map[string]string {
 
 func gatewayBindForMode(mode Mode) string {
 	if mode == ModeDocker {
-		return "0.0.0.0"
+		return "lan"
 	}
-	return "127.0.0.1"
+	return "loopback"
 }
 
 func bridgeHostForMode(mode Mode) string {

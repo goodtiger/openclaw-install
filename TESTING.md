@@ -235,7 +235,8 @@ docker compose logs --tail=200
 
 ```bash
 which openclaw
-openclaw version
+openclaw --version
+openclaw config validate
 ```
 
 再检查安装器生成的运行脚本：
@@ -257,10 +258,10 @@ sed -n '1,220p' ~/.openclaw/openclaw.json
 
 重点确认：
 
-- `meta.installer` 存在
-- `models.primary` 是你选的模型
+- `agents.defaults.model.primary` 是你选的模型
 - `models.providers.<provider-id>` 存在
 - `gateway.port` 为 `18789`
+- `gateway.bind` 为 `loopback`（native）或 `lan`（docker）
 - 如果没启用 channel，`channels` 应该为空对象或不包含新增 channel
 
 ### 6.2 检查 bridge 配置
@@ -296,7 +297,8 @@ sed -n '1,220p' ~/.openclaw/install-state.json
 先看是否已安装：
 
 ```bash
-openclaw version
+openclaw --version
+openclaw config validate
 ```
 
 如果安装器已经拉起 gateway，可以再试：
@@ -333,7 +335,7 @@ docker compose logs --tail=200
 
 通过标准至少满足一条：
 
-- Native 模式下 `openclaw version` 正常
+- Native 模式下 `openclaw --version` 和 `openclaw config validate` 正常
 - Docker 模式下容器处于运行状态，日志没有连续报错
 
 ## 8. 第五阶段：真实验证 LLM provider
@@ -615,10 +617,11 @@ openclaw gateway stop
 如果是 Linux 用户级服务：
 
 ```bash
-systemctl --user stop openclaw-bridge-qq.service
 systemctl --user stop openclaw-bridge-feishu.service
 systemctl --user stop openclaw-bridge-wecom.service
 ```
+
+QQ 现在走 OpenClaw plugin，不再对应 `openclaw-bridge-qq.service`。如果要停用 QQ，请用 `openclaw channels remove --channel qqbot` 或按你的 OpenClaw 环境方式处理。
 
 ## 14. 建议你实际怎么跑第一轮
 
@@ -630,7 +633,7 @@ systemctl --user stop openclaw-bridge-wecom.service
 4. provider 选 `bailian`
 5. 第一轮不启用任何 channel
 6. 验证 `openclaw.json` / `bridge.json` / `install-state.json`
-7. 验证 `openclaw version`
+7. 验证 `openclaw --version` 和 `openclaw config validate`
 8. 再跑一次 `reconfigure`，只启用 `qq`
 9. 确认 `openclaw plugins list` 和 `openclaw channels list`
 10. 再做 QQ 消息联调

@@ -29,16 +29,21 @@ func (w *Workflow) syncChannels(ctx context.Context, info system.Info, req Reque
 
 	for _, channel := range req.Channels {
 		if usesBridgeProvisioner(channel.Provisioner) {
+			w.progressDetailf("%s uses host bridge provisioning", channel.Name)
 			continue
 		}
 
 		if req.SkipInstall {
 			if previous.Version == "" {
-				warnings = append(warnings, fmt.Sprintf("%s plugin provisioning skipped because this looks like a config-only reconfigure without an existing OpenClaw install state.", channel.Name))
+				message := fmt.Sprintf("%s plugin provisioning skipped because this looks like a config-only reconfigure without an existing OpenClaw install state.", channel.Name)
+				warnings = append(warnings, message)
+				w.progressDetailf(message)
 				continue
 			}
 			if shouldSkipPluginProvisioning(info, req.Mode) {
-				warnings = append(warnings, fmt.Sprintf("%s plugin provisioning skipped because OpenClaw is not available yet; rerun install or reconfigure after OpenClaw is ready.", channel.Name))
+				message := fmt.Sprintf("%s plugin provisioning skipped because OpenClaw is not available yet; rerun install or reconfigure after OpenClaw is ready.", channel.Name)
+				warnings = append(warnings, message)
+				w.progressDetailf(message)
 				continue
 			}
 		}
@@ -64,6 +69,7 @@ func (w *Workflow) provisionPluginChannel(ctx context.Context, info system.Info,
 	if pluginPackage == "" {
 		return fmt.Errorf("%s is missing plugin package metadata", channel.Name)
 	}
+	w.progressDetailf("Installing plugin %s for %s", pluginPackage, channel.Name)
 
 	if err := w.runOpenClawCommand(ctx, info, mode, []string{"plugins", "install", pluginPackage}, stdout, stderr); err != nil {
 		return fmt.Errorf("install plugin for %s: %w", channel.Name, err)
@@ -76,6 +82,7 @@ func (w *Workflow) provisionPluginChannel(ctx context.Context, info system.Info,
 	if token != "" {
 		args = append(args, "--token", token)
 	}
+	w.progressDetailf("Adding OpenClaw channel %s", channelName)
 
 	if err := w.runOpenClawCommand(ctx, info, mode, args, stdout, stderr); err != nil {
 		return fmt.Errorf("configure channel %s: %w", channel.Name, err)
@@ -103,7 +110,7 @@ func pluginChannelToken(channel config.ChannelSelection) string {
 func (w *Workflow) runOpenClawCommand(ctx context.Context, info system.Info, mode Mode, args []string, stdout, stderr io.Writer) error {
 	switch mode {
 	case ModeNative:
-		return w.Executor.Run(ctx, "openclaw", args, nil, "", stdout, stderr)
+		return w.runCommand(ctx, "openclaw", args, nil, "", stdout, stderr)
 	case ModeDocker:
 		if err := w.ensureDockerGatewayRunning(ctx, info, stdout, stderr); err != nil {
 			return err
@@ -114,7 +121,7 @@ func (w *Workflow) runOpenClawCommand(ctx context.Context, info system.Info, mod
 		}
 		composeArgs = append(composeArgs, "-f", filepath.Join(info.RuntimeDir, "compose.yaml"), "exec", "-T", "openclaw", "openclaw")
 		composeArgs = append(composeArgs, args...)
-		return w.Executor.Run(ctx, cmd, composeArgs, nil, info.RuntimeDir, stdout, stderr)
+		return w.runCommand(ctx, cmd, composeArgs, nil, info.RuntimeDir, stdout, stderr)
 	default:
 		return fmt.Errorf("unsupported install mode %s", mode)
 	}
@@ -126,7 +133,7 @@ func (w *Workflow) ensureDockerGatewayRunning(ctx context.Context, info system.I
 		return err
 	}
 	composeArgs = append(composeArgs, "-f", filepath.Join(info.RuntimeDir, "compose.yaml"), "up", "-d")
-	return w.Executor.Run(ctx, cmd, composeArgs, nil, info.RuntimeDir, stdout, stderr)
+	return w.runCommand(ctx, cmd, composeArgs, nil, info.RuntimeDir, stdout, stderr)
 }
 
 func (w *Workflow) restartOpenClaw(ctx context.Context, info system.Info, mode Mode, stdout, stderr io.Writer) error {
@@ -135,14 +142,14 @@ func (w *Workflow) restartOpenClaw(ctx context.Context, info system.Info, mode M
 		if !system.HasCommand("openclaw") {
 			return nil
 		}
-		return w.Executor.Run(ctx, "openclaw", []string{"gateway", "restart"}, nil, "", stdout, stderr)
+		return w.runCommand(ctx, "openclaw", []string{"gateway", "restart"}, nil, "", stdout, stderr)
 	case ModeDocker:
 		cmd, composeArgs, err := composeInvocation()
 		if err != nil {
 			return err
 		}
 		composeArgs = append(composeArgs, "-f", filepath.Join(info.RuntimeDir, "compose.yaml"), "restart", "openclaw")
-		return w.Executor.Run(ctx, cmd, composeArgs, nil, info.RuntimeDir, stdout, stderr)
+		return w.runCommand(ctx, cmd, composeArgs, nil, info.RuntimeDir, stdout, stderr)
 	default:
 		return nil
 	}
