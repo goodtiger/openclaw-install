@@ -104,6 +104,9 @@ func (s *Server) Handler(channel string) (http.Handler, error) {
 	if !channelCfg.Enabled {
 		return nil, fmt.Errorf("channel %q is disabled", channel)
 	}
+	if strings.TrimSpace(channelCfg.Provisioner) != "" && channelCfg.Provisioner != "bridge" {
+		return nil, fmt.Errorf("channel %q is configured via %s, not via the bridge server", channel, channelCfg.Provisioner)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {

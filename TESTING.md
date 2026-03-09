@@ -90,8 +90,8 @@ cp -a ~/.openclaw ~/.openclaw/manual-backups/pre-openclaw-install-$(date +%Y%m%d
 
 第一轮建议只准备一个 provider，例如：
 
-- DeepSeek
 - 阿里百炼
+- DeepSeek
 - 智谱
 
 你至少需要准备：
@@ -103,8 +103,8 @@ cp -a ~/.openclaw ~/.openclaw/manual-backups/pre-openclaw-install-$(date +%Y%m%d
 
 #### QQ
 
-- OneBot HTTP API URL
-- OneBot Access Token（如果你的桥接器启用了）
+- QQ Bot AppID
+- QQ Bot AppSecret
 
 #### 飞书
 
@@ -187,12 +187,12 @@ cp -a ~/.openclaw ~/.openclaw/manual-backups/pre-openclaw-install-$(date +%Y%m%d
 ```bash
 ./openclaw-install install \
   --mode docker \
-  --provider deepseek \
+  --provider bailian \
   --api-key YOUR_API_KEY \
-  --primary-model deepseek-chat
+  --primary-model qwen3.5-plus
 ```
 
-交互时对 QQ / 飞书 / 企业微信都回答 `no`。
+交互时如果不想测试 QQ，就明确回答 `no`；否则默认会进入 QQ 凭证采集。
 
 安装完成后，检查：
 
@@ -224,12 +224,12 @@ docker compose logs --tail=200
 ```bash
 ./openclaw-install install \
   --mode native \
-  --provider deepseek \
+  --provider bailian \
   --api-key YOUR_API_KEY \
-  --primary-model deepseek-chat
+  --primary-model qwen3.5-plus
 ```
 
-交互时同样先不要启用任何 channel。
+交互时同样建议先不要启用任何 channel；如果要保留默认 QQ，就准备好 `AppID` 和 `AppSecret`。
 
 安装完成后，检查：
 
@@ -340,29 +340,26 @@ docker compose logs --tail=200
 
 当前安装器已经把 provider 信息写进配置，但 OpenClaw 主体是否会立即按预期消费，还取决于 OpenClaw 本身行为。为了把问题切开，第一轮建议直接验证 bridge 到 provider 的链路。
 
-### 8.1 先启一个最简单的 channel bridge
+### 8.1 先确认 channel 配置路径
 
-如果你暂时不测真实 channel，也可以先通过健康检查确认 bridge 进程可启动。
+如果你暂时不测真实 channel，可以先区分两类路径：
 
-例如后面准备测 QQ，就先让它启动：
+- QQ：默认是 OpenClaw 插件 channel，不走 `bridge serve`
+- 飞书 / 企业微信：走 bridge 服务
 
-```bash
-./openclaw-install bridge serve --channel qq
-```
-
-另开一个终端执行：
+QQ 可以先检查：
 
 ```bash
-curl http://127.0.0.1:19090/healthz
+openclaw plugins list
+openclaw channels list
 ```
 
-看到类似：
+飞书或企业微信可以再单独启动 bridge 并做健康检查，例如：
 
-```json
-{"ok":true,"channel":"qq"}
+```bash
+./openclaw-install bridge serve --channel feishu
+curl http://127.0.0.1:19091/healthz
 ```
-
-说明 bridge 进程已经起来了。
 
 ### 8.2 provider 成功的判断
 
@@ -392,41 +389,36 @@ curl http://127.0.0.1:19090/healthz
 建议先执行：
 
 ```bash
-./openclaw-install reconfigure --mode native --provider deepseek --api-key YOUR_API_KEY --primary-model deepseek-chat
+./openclaw-install reconfigure --mode native --provider bailian --api-key YOUR_API_KEY --primary-model qwen3.5-plus
 ```
 
 交互里：
 
 - 只启用 `QQ`
-- 填 OneBot URL
-- Access Token 有则填，没有就留空
+- 填 `QQ Bot AppID`
+- 填 `QQ Bot AppSecret`
 
-完成后启动：
-
-```bash
-./openclaw-install bridge serve --channel qq
-```
-
-确认健康检查：
+完成后检查：
 
 ```bash
-curl http://127.0.0.1:19090/healthz
+openclaw plugins list
+openclaw channels list
 ```
 
-然后从你的 QQ bridge 向这个回调地址发消息事件。
+如果插件和 channel 都配置成功，再从 QQ 侧实际发一条消息验证。
 
 重点观察：
 
-- 安装器终端有没有收到事件
-- 是否调用 provider 成功
-- 是否向 OneBot 发送回包
+- `@sliverp/qqbot` 是否已安装
+- `qqbot` channel 是否已出现在 `openclaw channels list`
+- 实际消息是否能走通
 
 ### 9.2 测飞书
 
 先重新配置：
 
 ```bash
-./openclaw-install reconfigure --mode native --provider deepseek --api-key YOUR_API_KEY --primary-model deepseek-chat
+./openclaw-install reconfigure --mode native --provider bailian --api-key YOUR_API_KEY --primary-model qwen3.5-plus
 ```
 
 交互里：
@@ -514,21 +506,21 @@ sed -n '1,220p' ~/.openclaw/openclaw.json
 
 - Linux
 - Native 模式
-- DeepSeek
+- 百炼
 - 不启用 channel
 
 ### 11.2 安装链路闭环
 
 - Linux
 - Docker 模式
-- DeepSeek
+- 百炼
 - 不启用 channel
 
 ### 11.3 Channel 闭环
 
 - Linux
 - Native 模式
-- DeepSeek
+- 百炼
 - QQ 或飞书，二选一
 
 ### 11.4 配置安全闭环
@@ -635,13 +627,13 @@ systemctl --user stop openclaw-bridge-wecom.service
 1. `./openclaw-install doctor`
 2. 选 Linux 机器
 3. 先跑 `native` 模式
-4. provider 选 `deepseek`
+4. provider 选 `bailian`
 5. 第一轮不启用任何 channel
 6. 验证 `openclaw.json` / `bridge.json` / `install-state.json`
 7. 验证 `openclaw version`
 8. 再跑一次 `reconfigure`，只启用 `qq`
-9. 启动 `bridge serve --channel qq`
-10. 再做 QQ 回调联调
+9. 确认 `openclaw plugins list` 和 `openclaw channels list`
+10. 再做 QQ 消息联调
 
 这样你可以把问题拆成三层：
 

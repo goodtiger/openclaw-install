@@ -192,6 +192,12 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 		}
 	}
 
+	channelWarnings, err := w.syncChannels(ctx, info, req, previousState, stdout, stderr)
+	result.Warnings = append(result.Warnings, channelWarnings...)
+	if err != nil {
+		return result, err
+	}
+
 	if !req.SkipVerify {
 		verifyWarnings, err := w.verify(ctx, info, req, stdout, stderr)
 		result.Warnings = append(result.Warnings, verifyWarnings...)
@@ -287,8 +293,11 @@ func (w *Workflow) verify(ctx context.Context, info system.Info, req Request, st
 		}
 	}
 
-	if len(req.Channels) > 0 {
+	if hasBridgeChannels(req.Channels) {
 		warnings = append(warnings, "bridge services were configured on the host side; verify health with `openclaw-install bridge serve --channel <name>` or your service manager")
+	}
+	if hasPluginChannels(req.Channels) {
+		warnings = append(warnings, "plugin-backed channels were configured through the OpenClaw CLI; check them with `openclaw channels list`")
 	}
 
 	return warnings, nil
@@ -473,6 +482,24 @@ func channelIDs(channels []config.ChannelSelection) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func hasBridgeChannels(channels []config.ChannelSelection) bool {
+	for _, channel := range channels {
+		if usesBridgeProvisioner(channel.Provisioner) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPluginChannels(channels []config.ChannelSelection) bool {
+	for _, channel := range channels {
+		if !usesBridgeProvisioner(channel.Provisioner) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Mode) String() string {

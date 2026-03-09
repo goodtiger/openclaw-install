@@ -18,14 +18,34 @@ type MirrorCandidate struct {
 	Env         map[string]string `json:"env,omitempty"`
 }
 
+type ModelCost struct {
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cacheRead"`
+	CacheWrite float64 `json:"cacheWrite"`
+}
+
+type ProviderModel struct {
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Reasoning     bool      `json:"reasoning"`
+	Input         []string  `json:"input,omitempty"`
+	Cost          ModelCost `json:"cost,omitempty"`
+	ContextWindow int       `json:"contextWindow,omitempty"`
+	MaxTokens     int       `json:"maxTokens,omitempty"`
+}
+
 type ProviderPreset struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Type      string   `json:"type"`
-	BaseURL   string   `json:"base_url"`
-	APIKeyEnv string   `json:"api_key_env"`
-	Models    []string `json:"models"`
-	Notes     string   `json:"notes"`
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	Type         string          `json:"type"`
+	BaseURL      string          `json:"base_url"`
+	API          string          `json:"api,omitempty"`
+	APIKeyEnv    string          `json:"api_key_env"`
+	DefaultModel string          `json:"default_model,omitempty"`
+	Models       []string        `json:"models"`
+	Catalog      []ProviderModel `json:"catalog,omitempty"`
+	Notes        string          `json:"notes"`
 }
 
 type CredentialField struct {
@@ -36,14 +56,19 @@ type CredentialField struct {
 }
 
 type ChannelPreset struct {
-	ID             string            `json:"id"`
-	Name           string            `json:"name"`
-	Driver         string            `json:"driver"`
-	DefaultListen  string            `json:"default_listen"`
-	DefaultPath    string            `json:"default_path"`
-	Notes          string            `json:"notes"`
-	RequiredFields []CredentialField `json:"required_fields"`
-	Defaults       map[string]any    `json:"defaults"`
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	Driver          string            `json:"driver"`
+	Provisioner     string            `json:"provisioner,omitempty"`
+	DefaultEnabled  bool              `json:"default_enabled,omitempty"`
+	DefaultListen   string            `json:"default_listen"`
+	DefaultPath     string            `json:"default_path"`
+	PluginPackage   string            `json:"plugin_package,omitempty"`
+	OpenClawChannel string            `json:"openclaw_channel,omitempty"`
+	TokenFields     []string          `json:"token_fields,omitempty"`
+	Notes           string            `json:"notes"`
+	RequiredFields  []CredentialField `json:"required_fields"`
+	Defaults        map[string]any    `json:"defaults"`
 }
 
 type Bundle struct {

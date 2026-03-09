@@ -5,8 +5,9 @@
 - 检测本机环境并给出推荐安装模式
 - 在安装过程中自动选择更容易访问的镜像/代理源
 - 自动生成或增量合并 `~/.openclaw/openclaw.json`
+- 默认生成百炼 Coding Plan 的模型配置
 - 预置国内常见 LLM 供应商配置
-- 提供 QQ、飞书、企业微信的 bridge 化 channel 接入
+- 默认提供 QQ `qqbot` 插件接入，并保留飞书、企业微信的 bridge 化 channel 接入
 - 为 bridge 生成本地启动脚本，并在 Linux/macOS 尝试注册后台服务
 
 当前实现已经可以编译、运行、生成配置和 bridge 资产，但仍属于 v1，重点是先把安装链路打通。
@@ -62,17 +63,18 @@ Native 模式会做这些事情：
 
 当前内置以下 provider preset：
 
+- `bailian`（默认）
 - `deepseek`
-- `bailian`
 - `zhipu`
 - `moonshot`
 - `doubao`
 - `custom-openai`
 
-这些预设都会写入 `models.providers`，并生成：
+默认 provider 为 `bailian`，会生成百炼 Coding Plan 端点对应的：
 
-- `models.primary`
-- `models.fallbacks`
+- `models.providers.bailian`
+- `agents.defaults.model.primary`
+- `agents.defaults.models`
 
 当前统一按 OpenAI Compatible 接口处理。
 
@@ -80,11 +82,14 @@ Native 模式会做这些事情：
 
 当前内置以下 channel preset：
 
-- `qq`
+- `qq`（默认，使用 `@sliverp/qqbot` 插件）
 - `feishu`
 - `wecom`
 
-注意：当前版本的 QQ、飞书、企业微信不是假设为 OpenClaw 原生 channel，而是通过本安装器生成的 bridge 服务接入。
+注意：
+
+- QQ 默认不是 bridge，而是通过 `openclaw plugins install @sliverp/qqbot@latest` 和 `openclaw channels add --channel qqbot --token "AppID:AppSecret"` 配置
+- 飞书、企业微信仍然通过本安装器生成的 bridge 服务接入
 
 ## 3. 构建与准备
 
@@ -159,13 +164,13 @@ scripts/build-release.sh linux/amd64 darwin/arm64 windows/amd64
 程序会依次询问你：
 
 1. 安装模式：`docker` 或 `native`
-2. LLM 供应商预设
+2. LLM 供应商预设，默认是 `bailian`
 3. `baseUrl`
 4. `apiKey`
 5. 主模型
 6. fallback 模型
-7. 是否启用 QQ / 飞书 / 企业微信
-8. 每个 channel 所需的监听地址、回调路径和凭证字段
+7. 是否启用 QQ / 飞书 / 企业微信，其中 QQ 默认启用
+8. 每个 channel 所需的凭证字段；飞书/企微额外需要监听地址和回调路径
 9. 最终确认
 
 ### 4.2 非交互快速配置
@@ -176,16 +181,16 @@ scripts/build-release.sh linux/amd64 darwin/arm64 windows/amd64
 ./openclaw-install install \
   --yes \
   --mode native \
-  --provider deepseek \
+  --provider bailian \
   --api-key sk-xxxx \
-  --primary-model deepseek-chat \
+  --primary-model qwen3.5-plus \
   --skip-verify
 ```
 
 说明：
 
 - `--yes` 会尽量使用默认值
-- 这条命令不会自动启用任何 channel
+- 这条命令默认会继续要求你填写 QQ 的 `AppID` 和 `AppSecret`
 - `--skip-verify` 会跳过安装后的验证步骤
 
 ### 4.3 仅重新写配置，不重新安装
@@ -254,7 +259,7 @@ scripts/build-release.sh linux/amd64 darwin/arm64 windows/amd64
 参数说明：
 
 - `--mode`：可选 `docker` 或 `native`
-- `--provider`：provider preset id，例如 `deepseek`
+- `--provider`：provider preset id，例如 `bailian`
 - `--base-url`：覆盖预设中的 API 地址
 - `--api-key`：供应商 API Key
 - `--primary-model`：主模型
@@ -266,8 +271,8 @@ scripts/build-release.sh linux/amd64 darwin/arm64 windows/amd64
 重要说明：
 
 - `--yes` 不是完全无人值守模式
-- 如果你启用了 channel，程序仍然会继续询问必要的凭证字段
-- 即使指定了 `--channels=qq,feishu`，也仍然需要输入这些 channel 的具体参数
+- QQ 默认启用，因此即使使用 `--yes`，程序通常仍会继续询问 `QQ Bot AppID` 和 `QQ Bot AppSecret`
+- 如果你启用了飞书或企微，程序仍然会继续询问必要的凭证字段
 
 ### 5.3 `reconfigure`
 
@@ -291,12 +296,12 @@ scripts/build-release.sh linux/amd64 darwin/arm64 windows/amd64
 用法：
 
 ```bash
-./openclaw-install bridge serve --channel qq
+./openclaw-install bridge serve --channel feishu
 ```
 
 可选参数：
 
-- `--channel`：必填，支持 `qq`、`feishu`、`wecom`
+- `--channel`：必填，当前用于 bridge 类型 channel，支持 `feishu`、`wecom`
 - `--config`：bridge 配置文件路径，默认是 `~/.openclaw/bridge.json`
 
 作用：
@@ -385,24 +390,25 @@ Native 模式常见文件：
 
 ### 7.1 QQ
 
-当前按 OneBot 风格接入。
+当前默认按 OpenClaw 插件方式接入，而不是 bridge。
 
 需要的主要字段：
 
-- `OneBot HTTP API URL`
-- `OneBot Access Token`（可选）
+- `QQ Bot AppID`
+- `QQ Bot AppSecret`
 
-适配场景：
+安装器会执行：
 
-- NapCat
-- LLOneBot
-- 其他兼容 OneBot 协议的 QQ bridge
+```bash
+openclaw plugins install @sliverp/qqbot@latest
+openclaw channels add --channel qqbot --token "AppID:AppSecret"
+```
 
 工作方式：
 
-- QQ 事件推送给本安装器生成的 bridge
-- bridge 调用 LLM 接口生成回复
-- bridge 再回调 OneBot 的发送接口
+- 安装器安装 `qqbot` 插件
+- 使用 `AppID:AppSecret` 组装 token 并写入 OpenClaw channel 配置
+- QQ 消息通过 OpenClaw 原生 channel/plugin 链路处理
 
 ### 7.2 飞书
 
@@ -442,13 +448,12 @@ Native 模式常见文件：
 
 ## 8. Bridge 服务注册行为
 
-如果启用了 channel，安装器会为每个 channel 生成独立 bridge 启动脚本。
+如果启用了 bridge 类型 channel，安装器会为每个 channel 生成独立 bridge 启动脚本。QQ 默认走插件方式，不会生成 QQ bridge 脚本。
 
 ### 8.1 Linux
 
-会尝试注册用户级 `systemd` 服务：
+会尝试为 bridge 类型 channel 注册用户级 `systemd` 服务：
 
-- `openclaw-bridge-qq.service`
 - `openclaw-bridge-feishu.service`
 - `openclaw-bridge-wecom.service`
 
@@ -467,7 +472,7 @@ Native 模式常见文件：
 当前只生成脚本，不自动注册后台服务。需要你手动启动：
 
 ```bash
-openclaw-install bridge serve --channel qq
+openclaw-install bridge serve --channel feishu
 ```
 
 ## 9. 推荐使用流程
@@ -489,9 +494,9 @@ openclaw-install bridge serve --channel qq
 HOME=/tmp/openclaw-smoke ./openclaw-install reconfigure \
   --yes \
   --mode native \
-  --provider deepseek \
+  --provider bailian \
   --api-key test-key \
-  --primary-model deepseek-chat \
+  --primary-model qwen3.5-plus \
   --skip-verify
 ```
 
@@ -511,7 +516,7 @@ HOME=/tmp/openclaw-smoke ./openclaw-install reconfigure \
 ### 9.4 调试单个 channel
 
 ```bash
-./openclaw-install bridge serve --channel qq
+./openclaw-install bridge serve --channel feishu
 ```
 
 如果要用自定义 bridge 配置：
@@ -557,16 +562,17 @@ docker compose config
 例如启动 QQ bridge：
 
 ```bash
-./openclaw-install bridge serve --channel qq
+openclaw-install channels list
 ```
 
-然后访问健康检查：
+QQ 默认是插件 channel，不走 `bridge serve`。如果你要验证 QQ，优先看：
 
 ```bash
-curl http://127.0.0.1:19090/healthz
+openclaw plugins list
+openclaw channels list
 ```
 
-如果启用了其他 channel，则监听端口分别取决于你在安装过程中填写的 `listenAddr`。
+如果要验证飞书或企微 bridge，再启动对应 bridge 进程并访问健康检查端点。
 
 ## 11. 常见问题
 
@@ -597,7 +603,7 @@ curl http://127.0.0.1:19090/healthz
 
 特别是：
 
-- 启用 channel 后仍然需要输入必要凭证
+- 默认 QQ 启用后仍然需要输入 `AppID` / `AppSecret`
 - 某些监听地址和路径也仍然可能继续询问
 
 ### 11.4 `reconfigure` 会不会把我手写的配置覆盖掉
@@ -631,6 +637,7 @@ curl http://127.0.0.1:19090/healthz
 - 企业微信适配目前偏基础链路打通，不是完整平台集成
 - Docker 模式当前使用“本地构建 Node 镜像并 npm 安装 OpenClaw”的方式，而不是直接拉官方 OpenClaw 镜像
 - 镜像候选链已实现，但实际可用性仍取决于你所在网络环境
+- QQ 插件 channel 依赖本机 OpenClaw CLI 在真实环境里成功执行 `plugins install` 和 `channels add`
 
 ## 13. 当前仓库中最重要的实现位置
 

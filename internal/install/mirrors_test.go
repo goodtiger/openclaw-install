@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goodtiger/openclaw-install/internal/config"
 	"github.com/goodtiger/openclaw-install/presets"
 )
 
@@ -56,4 +57,20 @@ type roundTripFunc func(req *http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return fn(req)
+}
+
+func TestPluginChannelToken(t *testing.T) {
+	channel := config.ChannelSelection{
+		ID:          "qq",
+		Provisioner: "openclaw-plugin",
+		TokenFields: []string{"app_id", "app_secret"},
+		Fields: map[string]string{
+			"app_id":     "appid",
+			"app_secret": "appsecret",
+		},
+	}
+
+	if got := pluginChannelToken(channel); got != "appid:appsecret" {
+		t.Fatalf("pluginChannelToken() = %q, want %q", got, "appid:appsecret")
+	}
 }

@@ -109,18 +109,24 @@ func SaveInstallState(path string, state InstallState) error {
 }
 
 func BuildManagedConfig(input ManagedConfigInput) map[string]any {
-	providers := map[string]any{
-		input.Provider.ID: map[string]any{
-			"name":         input.Provider.Name,
-			"type":         input.Provider.Type,
-			"baseUrl":      input.Provider.BaseURL,
-			"apiKey":       input.Provider.APIKey,
-			"defaultModel": input.Provider.PrimaryModel,
-		},
+	providerEntry := map[string]any{
+		"baseUrl": input.Provider.BaseURL,
+		"apiKey":  valueOrDefault(input.Provider.APIKey, "YOUR_API_KEY"),
 	}
+	if strings.TrimSpace(input.Provider.API) != "" {
+		providerEntry["api"] = input.Provider.API
+	}
+	if models := providerCatalogToMaps(providerCatalog(input.Provider)); len(models) > 0 {
+		providerEntry["models"] = models
+	}
+
+	providers := map[string]any{input.Provider.ID: providerEntry}
 
 	channels := map[string]any{}
 	for _, channel := range input.Channels {
+		if !usesBridgeProvisioner(channel.Provisioner) {
+			continue
+		}
 		channels[channel.ID] = map[string]any{
 			"enabled":     true,
 			"driver":      "bridge",
@@ -134,9 +140,12 @@ func BuildManagedConfig(input ManagedConfigInput) map[string]any {
 		}
 	}
 
-	fallbacks := make([]string, 0, len(input.Provider.FallbackModels))
-	for _, model := range input.Provider.FallbackModels {
-		fallbacks = append(fallbacks, joinModelID(input.Provider.ID, model))
+	agentModels := map[string]any{}
+	for _, model := range providerCatalog(input.Provider) {
+		agentModels[joinModelID(input.Provider.ID, model.ID)] = map[string]any{}
+	}
+	if len(agentModels) == 0 && strings.TrimSpace(input.Provider.PrimaryModel) != "" {
+		agentModels[joinModelID(input.Provider.ID, input.Provider.PrimaryModel)] = map[string]any{}
 	}
 
 	return map[string]any{
@@ -146,9 +155,9 @@ func BuildManagedConfig(input ManagedConfigInput) map[string]any {
 				"version":       input.InstallerVersion,
 				"mode":          input.Mode,
 				"managedAt":     input.ManagedAt.UTC().Format(time.RFC3339),
-				"managedKeys":   []string{"meta.installer", "gateway.bind", "gateway.port", "models.primary", "models.fallbacks", "models.providers", "channels"},
+				"managedKeys":   []string{"meta.installer", "gateway.bind", "gateway.port", "gateway.mode", "models.providers", "agents.defaults.model.primary", "agents.defaults.models", "channels"},
 				"mirrorNames":   input.MirrorNames,
-				"managedDriver": "bridge",
+				"managedDriver": "hybrid",
 			},
 		},
 		"gateway": map[string]any{
@@ -158,9 +167,15 @@ func BuildManagedConfig(input ManagedConfigInput) map[string]any {
 		},
 		"models": map[string]any{
 			"mode":      "merge",
-			"primary":   joinModelID(input.Provider.ID, input.Provider.PrimaryModel),
-			"fallbacks": fallbacks,
 			"providers": providers,
+		},
+		"agents": map[string]any{
+			"defaults": map[string]any{
+				"model": map[string]any{
+					"primary": joinModelID(input.Provider.ID, input.Provider.PrimaryModel),
+				},
+				"models": agentModels,
+			},
 		},
 		"channels": channels,
 	}
@@ -170,13 +185,17 @@ func BuildBridgeConfig(input ManagedConfigInput) BridgeConfig {
 	channels := make(map[string]BridgeChannelConfig, len(input.Channels))
 	for _, channel := range input.Channels {
 		channels[channel.ID] = BridgeChannelConfig{
-			Enabled:     true,
-			Driver:      channel.Driver,
-			ListenAddr:  channel.ListenAddr,
-			Path:        channel.Path,
-			Fields:      cloneStringMap(channel.Fields),
-			DMPolicy:    valueOrDefault(channel.DMPolicy, "pairing"),
-			GroupPolicy: valueOrDefault(channel.GroupPolicy, "allowlist"),
+			Enabled:         true,
+			Driver:          channel.Driver,
+			Provisioner:     valueOrDefault(channel.Provisioner, "bridge"),
+			ListenAddr:      channel.ListenAddr,
+			Path:            channel.Path,
+			Fields:          cloneStringMap(channel.Fields),
+			PluginPackage:   channel.PluginPackage,
+			OpenClawChannel: channel.OpenClawChannel,
+			TokenFields:     slices.Clone(channel.TokenFields),
+			DMPolicy:        valueOrDefault(channel.DMPolicy, "pairing"),
+			GroupPolicy:     valueOrDefault(channel.GroupPolicy, "allowlist"),
 		}
 	}
 
@@ -194,6 +213,10 @@ func ApplyManagedConfig(existing, managed map[string]any, previous InstallState)
 
 	if previous.ManagedProviderID != "" {
 		deleteNestedKey(base, []string{"models", "providers", previous.ManagedProviderID})
+		deleteNestedKey(base, []string{"models", "primary"})
+		deleteNestedKey(base, []string{"models", "fallbacks"})
+		deleteNestedKey(base, []string{"agents", "defaults", "model"})
+		deleteNestedKey(base, []string{"agents", "defaults", "models"})
 	}
 	for _, channelID := range previous.ManagedChannels {
 		deleteNestedKey(base, []string{"channels", channelID})
@@ -303,4 +326,61 @@ func valueOrDefault(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func providerCatalog(provider ProviderConfig) []ProviderModel {
+	if len(provider.Catalog) > 0 {
+		return provider.Catalog
+	}
+
+	seen := map[string]struct{}{}
+	out := []ProviderModel{}
+	for _, id := range append([]string{provider.PrimaryModel}, provider.FallbackModels...) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, ProviderModel{ID: id, Name: id})
+	}
+	return out
+}
+
+func providerCatalogToMaps(models []ProviderModel) []any {
+	if len(models) == 0 {
+		return nil
+	}
+
+	out := make([]any, 0, len(models))
+	for _, model := range models {
+		entry := map[string]any{
+			"id":        model.ID,
+			"name":      valueOrDefault(model.Name, model.ID),
+			"reasoning": model.Reasoning,
+		}
+		if len(model.Input) > 0 {
+			entry["input"] = slices.Clone(model.Input)
+		}
+		entry["cost"] = map[string]any{
+			"input":      model.Cost.Input,
+			"output":     model.Cost.Output,
+			"cacheRead":  model.Cost.CacheRead,
+			"cacheWrite": model.Cost.CacheWrite,
+		}
+		if model.ContextWindow > 0 {
+			entry["contextWindow"] = model.ContextWindow
+		}
+		if model.MaxTokens > 0 {
+			entry["maxTokens"] = model.MaxTokens
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func usesBridgeProvisioner(provisioner string) bool {
+	return valueOrDefault(provisioner, "bridge") == "bridge"
 }

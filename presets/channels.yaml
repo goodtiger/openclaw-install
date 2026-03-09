@@ -2,22 +2,24 @@
   "channels": [
     {
       "id": "qq",
-      "name": "QQ (OneBot)",
-      "driver": "onebot",
-      "default_listen": "127.0.0.1:19090",
-      "default_path": "/qq/events",
-      "notes": "Works with NapCat, LLOneBot, and other OneBot-compatible QQ bridges.",
+      "name": "QQ (qqbot plugin)",
+      "driver": "qqbot",
+      "provisioner": "openclaw-plugin",
+      "default_enabled": true,
+      "plugin_package": "@sliverp/qqbot@latest",
+      "openclaw_channel": "qqbot",
+      "token_fields": ["app_id", "app_secret"],
+      "notes": "Default QQ channel. Installs the @sliverp/qqbot plugin and runs `openclaw channels add --channel qqbot --token AppID:AppSecret`.",
       "required_fields": [
         {
-          "key": "onebot_url",
-          "label": "OneBot HTTP API URL",
+          "key": "app_id",
+          "label": "QQ Bot AppID",
           "secret": false
         },
         {
-          "key": "access_token",
-          "label": "OneBot Access Token",
-          "secret": true,
-          "optional": true
+          "key": "app_secret",
+          "label": "QQ Bot AppSecret",
+          "secret": true
         }
       ],
       "defaults": {

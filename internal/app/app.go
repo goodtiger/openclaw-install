@@ -322,7 +322,7 @@ func runBridgeServe(args []string, out, errOut io.Writer) error {
 	fs := flag.NewFlagSet("bridge serve", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 
-	channelFlag := fs.String("channel", "", "channel id: qq, feishu, wecom")
+	channelFlag := fs.String("channel", "", "bridge-backed channel id: feishu, wecom")
 	configPathFlag := fs.String("config", info.BridgeConfigPath, "path to bridge config JSON")
 
 	if err := fs.Parse(args); err != nil {
@@ -389,24 +389,35 @@ func chooseProviderPreset(prompter *ui.Prompter, bundle presets.Bundle, provider
 
 func buildProviderConfig(prompter *ui.Prompter, preset presets.ProviderPreset, existing config.ProviderConfig, options runInstallOptions, out io.Writer) (config.ProviderConfig, error) {
 	cfg := config.ProviderConfig{
-		ID:   preset.ID,
-		Name: preset.Name,
-		Type: preset.Type,
+		ID:      preset.ID,
+		Name:    preset.Name,
+		Type:    preset.Type,
+		API:     firstNonEmpty(existing.API, preset.API),
+		Catalog: convertProviderCatalog(preset.Catalog),
 	}
 
 	baseURL := firstNonEmpty(options.baseURL, existing.BaseURL, preset.BaseURL)
-	apiKey := firstNonEmpty(options.apiKey, existing.APIKey, os.Getenv(preset.APIKeyEnv))
-	primaryModel := firstNonEmpty(options.primaryModel, existing.PrimaryModel)
-	if primaryModel == "" && len(preset.Models) > 0 {
-		primaryModel = preset.Models[0]
+	apiKey := firstNonEmpty(options.apiKey, existing.APIKey, os.Getenv(preset.APIKeyEnv), "YOUR_API_KEY")
+	primaryModel := firstNonEmpty(options.primaryModel, existing.PrimaryModel, preset.DefaultModel)
+	if primaryModel == "" {
+		modelIDs := providerModelIDs(preset, cfg.Catalog)
+		if len(modelIDs) > 0 {
+			primaryModel = modelIDs[0]
+		}
 	}
 
 	fallbackModels := parseCSV(options.fallbacks)
 	if len(fallbackModels) == 0 && len(existing.FallbackModels) > 0 {
 		fallbackModels = existing.FallbackModels
 	}
-	if len(fallbackModels) == 0 && len(preset.Models) > 1 {
-		fallbackModels = append([]string{}, preset.Models[1:min(3, len(preset.Models))]...)
+	if len(fallbackModels) == 0 {
+		modelIDs := providerModelIDs(preset, cfg.Catalog)
+		for _, modelID := range modelIDs {
+			if modelID == primaryModel {
+				continue
+			}
+			fallbackModels = append(fallbackModels, modelID)
+		}
 	}
 
 	if !options.yes {
@@ -448,7 +459,7 @@ func buildChannelSelections(prompter *ui.Prompter, bundle presets.Bundle, existi
 	selections := []config.ChannelSelection{}
 
 	for _, preset := range bundle.Channels {
-		defaultEnabled := slices.Contains(stateChannels, preset.ID)
+		defaultEnabled := slices.Contains(stateChannels, preset.ID) || preset.DefaultEnabled
 		enabled := false
 
 		switch {
@@ -473,7 +484,7 @@ func buildChannelSelections(prompter *ui.Prompter, bundle presets.Bundle, existi
 		listenAddr := firstNonEmpty(existingChannel.ListenAddr, preset.DefaultListen)
 		path := firstNonEmpty(existingChannel.Path, preset.DefaultPath)
 
-		if !yes || useFlagSelection {
+		if usesBridgeProvisioner(preset.Provisioner) && (!yes || useFlagSelection) {
 			var err error
 			listenAddr, err = prompter.AskString(preset.Name+" listen address", listenAddr, false)
 			if err != nil {
@@ -525,14 +536,18 @@ func buildChannelSelections(prompter *ui.Prompter, bundle presets.Bundle, existi
 		}
 
 		selections = append(selections, config.ChannelSelection{
-			ID:          preset.ID,
-			Name:        preset.Name,
-			Driver:      preset.Driver,
-			ListenAddr:  listenAddr,
-			Path:        path,
-			Fields:      fields,
-			DMPolicy:    dmPolicy,
-			GroupPolicy: groupPolicy,
+			ID:              preset.ID,
+			Name:            preset.Name,
+			Driver:          preset.Driver,
+			Provisioner:     normalizedProvisioner(preset.Provisioner),
+			ListenAddr:      listenAddr,
+			Path:            path,
+			Fields:          fields,
+			PluginPackage:   preset.PluginPackage,
+			OpenClawChannel: preset.OpenClawChannel,
+			TokenFields:     slices.Clone(preset.TokenFields),
+			DMPolicy:        dmPolicy,
+			GroupPolicy:     groupPolicy,
 		})
 	}
 
@@ -587,7 +602,7 @@ func printHelp(out io.Writer) {
 	fmt.Fprintln(out, "Examples:")
 	fmt.Fprintln(out, "  openclaw-install install")
 	fmt.Fprintln(out, "  openclaw-install doctor")
-	fmt.Fprintln(out, "  openclaw-install bridge serve --channel qq")
+	fmt.Fprintln(out, "  openclaw-install bridge serve --channel feishu")
 }
 
 func recommendedMode(info system.Info) install.Mode {
@@ -618,16 +633,53 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func providerModelIDs(preset presets.ProviderPreset, catalog []config.ProviderModel) []string {
+	if len(catalog) > 0 {
+		out := make([]string, 0, len(catalog))
+		for _, model := range catalog {
+			if strings.TrimSpace(model.ID) == "" {
+				continue
+			}
+			out = append(out, model.ID)
+		}
+		return out
+	}
+	return append([]string{}, preset.Models...)
+}
+
+func convertProviderCatalog(input []presets.ProviderModel) []config.ProviderModel {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make([]config.ProviderModel, 0, len(input))
+	for _, model := range input {
+		out = append(out, config.ProviderModel{
+			ID:            model.ID,
+			Name:          model.Name,
+			Reasoning:     model.Reasoning,
+			Input:         append([]string{}, model.Input...),
+			Cost:          config.ModelCost(model.Cost),
+			ContextWindow: model.ContextWindow,
+			MaxTokens:     model.MaxTokens,
+		})
+	}
+	return out
+}
+
+func normalizedProvisioner(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "bridge"
+	}
+	return value
+}
+
+func usesBridgeProvisioner(provisioner string) bool {
+	return normalizedProvisioner(provisioner) == "bridge"
+}
+
 func valueOrDefault(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback
 	}
 	return value
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

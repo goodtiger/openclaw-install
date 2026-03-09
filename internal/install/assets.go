@@ -44,6 +44,9 @@ func (w *Workflow) writeAssets(ctx context.Context, info system.Info, req Reques
 	}
 
 	for _, channel := range req.Channels {
+		if !usesBridgeProvisioner(channel.Provisioner) {
+			continue
+		}
 		scriptPath, err := writeBridgeScript(info, binaryPath, channel.ID)
 		if err != nil {
 			return warnings, err
@@ -165,9 +168,14 @@ func (w *Workflow) registerBridgeService(ctx context.Context, info system.Info, 
 }
 
 func (w *Workflow) cleanupObsoleteChannelAssets(ctx context.Context, info system.Info, previous config.InstallState, current []config.ChannelSelection, stdout, stderr io.Writer) error {
-	currentIDs := channelIDs(current)
+	currentBridgeIDs := []string{}
+	for _, channel := range current {
+		if usesBridgeProvisioner(channel.Provisioner) {
+			currentBridgeIDs = append(currentBridgeIDs, channel.ID)
+		}
+	}
 	for _, channelID := range previous.ManagedChannels {
-		if slices.Contains(currentIDs, channelID) {
+		if slices.Contains(currentBridgeIDs, channelID) {
 			continue
 		}
 
