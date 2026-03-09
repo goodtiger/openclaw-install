@@ -20,3 +20,27 @@ func TestLoad(t *testing.T) {
 		t.Fatal("expected qq channel preset to exist")
 	}
 }
+
+func TestMirrorPriorityPrefersChinaFriendlyCandidates(t *testing.T) {
+	bundle, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	cases := map[string]string{
+		"docker_image":   "daocloud",
+		"github_release": "ghproxy",
+		"go_proxy":       "goproxy-cn",
+		"npm_registry":   "npmmirror",
+	}
+
+	for category, want := range cases {
+		candidates := bundle.Mirrors.Categories[category]
+		if len(candidates) == 0 {
+			t.Fatalf("expected candidates for %s", category)
+		}
+		if got := candidates[0].Name; got != want {
+			t.Fatalf("%s first candidate = %q, want %q", category, got, want)
+		}
+	}
+}

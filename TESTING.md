@@ -174,7 +174,7 @@ cp -a ~/.openclaw ~/.openclaw/manual-backups/pre-openclaw-install-$(date +%Y%m%d
 
 - `mirror category ... fell back to ... after probe failures`
 
-说明只是镜像探测没能成功验证，不代表实际安装一定失败。真实下载时是否能成功，还要看你机器的实际网络。
+当前策略是国内镜像优先、官方源回退。看到这类提示，说明镜像探测没能成功验证，不代表实际安装一定失败。真实下载时是否能成功，还要看你机器的实际网络。
 
 ## 5. 第二阶段：只测 OpenClaw 主体安装
 

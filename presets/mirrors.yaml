@@ -2,12 +2,6 @@
   "categories": {
     "docker_image": [
       {
-        "name": "official",
-        "base_url": "node:22-bullseye",
-        "probe_url": "https://registry-1.docker.io/v2/",
-        "image_prefix": ""
-      },
-      {
         "name": "daocloud",
         "base_url": "docker.m.daocloud.io/library/node:22-bullseye",
         "probe_url": "https://docker.m.daocloud.io/v2/",
@@ -18,42 +12,48 @@
         "base_url": "docker.1ms.run/library/node:22-bullseye",
         "probe_url": "https://docker.1ms.run/v2/",
         "image_prefix": "docker.1ms.run/library/"
+      },
+      {
+        "name": "official",
+        "base_url": "node:22-bullseye",
+        "probe_url": "https://registry-1.docker.io/v2/",
+        "image_prefix": ""
       }
     ],
     "github_release": [
       {
-        "name": "direct",
-        "base_url": "https://github.com",
-        "probe_url": "https://github.com"
-      },
-      {
         "name": "ghproxy",
         "base_url": "https://ghproxy.com/https://github.com",
         "probe_url": "https://ghproxy.com/https://raw.githubusercontent.com/openai/openai-openapi/master/README.md"
+      },
+      {
+        "name": "direct",
+        "base_url": "https://github.com",
+        "probe_url": "https://github.com"
       }
     ],
     "go_proxy": [
       {
-        "name": "official",
-        "base_url": "https://proxy.golang.org",
-        "probe_url": "https://proxy.golang.org/github.com/gorilla/mux/@v/list"
-      },
-      {
         "name": "goproxy-cn",
         "base_url": "https://goproxy.cn",
         "probe_url": "https://goproxy.cn/github.com/gorilla/mux/@v/list"
+      },
+      {
+        "name": "official",
+        "base_url": "https://proxy.golang.org",
+        "probe_url": "https://proxy.golang.org/github.com/gorilla/mux/@v/list"
       }
     ],
     "npm_registry": [
       {
-        "name": "official",
-        "base_url": "https://registry.npmjs.org",
-        "probe_url": "https://registry.npmjs.org/-/ping?write=true"
-      },
-      {
         "name": "npmmirror",
         "base_url": "https://registry.npmmirror.com",
         "probe_url": "https://registry.npmmirror.com/-/ping?write=true"
+      },
+      {
+        "name": "official",
+        "base_url": "https://registry.npmjs.org",
+        "probe_url": "https://registry.npmjs.org/-/ping?write=true"
       }
     ]
   }
