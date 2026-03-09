@@ -1,0 +1,58 @@
+{
+  "providers": [
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "type": "openai-compatible",
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "models": ["deepseek-chat", "deepseek-reasoner"],
+      "notes": "Recommended for coding and reasoning in mainland China."
+    },
+    {
+      "id": "bailian",
+      "name": "Alibaba Bailian",
+      "type": "openai-compatible",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "models": ["qwen-max", "qwen-plus", "qwen-turbo"],
+      "notes": "Qwen family through DashScope compatible mode."
+    },
+    {
+      "id": "zhipu",
+      "name": "Zhipu AI",
+      "type": "openai-compatible",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "api_key_env": "ZHIPU_API_KEY",
+      "models": ["glm-4-plus", "glm-4-air", "glm-4-flash"],
+      "notes": "GLM series via OpenAI-compatible API."
+    },
+    {
+      "id": "moonshot",
+      "name": "Moonshot/Kimi",
+      "type": "openai-compatible",
+      "base_url": "https://api.moonshot.cn/v1",
+      "api_key_env": "MOONSHOT_API_KEY",
+      "models": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
+      "notes": "Kimi-compatible long-context models."
+    },
+    {
+      "id": "doubao",
+      "name": "Doubao",
+      "type": "openai-compatible",
+      "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+      "api_key_env": "ARK_API_KEY",
+      "models": ["doubao-1-5-pro-32k", "doubao-1-5-lite-32k", "doubao-pro-4k"],
+      "notes": "Volcengine ARK OpenAI-compatible endpoints."
+    },
+    {
+      "id": "custom-openai",
+      "name": "Custom OpenAI Compatible",
+      "type": "openai-compatible",
+      "base_url": "https://api.example.com/v1",
+      "api_key_env": "OPENAI_COMPAT_API_KEY",
+      "models": ["gpt-4o-mini"],
+      "notes": "For self-hosted gateways or enterprise-compatible endpoints."
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+dist/
+openclaw-install
+*.exe
+*.log
+.DS_Store

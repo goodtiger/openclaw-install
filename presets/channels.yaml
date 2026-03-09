@@ -1,0 +1,114 @@
+{
+  "channels": [
+    {
+      "id": "qq",
+      "name": "QQ (OneBot)",
+      "driver": "onebot",
+      "default_listen": "127.0.0.1:19090",
+      "default_path": "/qq/events",
+      "notes": "Works with NapCat, LLOneBot, and other OneBot-compatible QQ bridges.",
+      "required_fields": [
+        {
+          "key": "onebot_url",
+          "label": "OneBot HTTP API URL",
+          "secret": false
+        },
+        {
+          "key": "access_token",
+          "label": "OneBot Access Token",
+          "secret": true,
+          "optional": true
+        }
+      ],
+      "defaults": {
+        "dmPolicy": "pairing",
+        "groupPolicy": "allowlist"
+      }
+    },
+    {
+      "id": "feishu",
+      "name": "Feishu",
+      "driver": "feishu",
+      "default_listen": "127.0.0.1:19091",
+      "default_path": "/feishu/events",
+      "notes": "Uses event callback mode for Feishu apps and bots.",
+      "required_fields": [
+        {
+          "key": "app_id",
+          "label": "Feishu App ID",
+          "secret": false
+        },
+        {
+          "key": "app_secret",
+          "label": "Feishu App Secret",
+          "secret": true
+        },
+        {
+          "key": "verification_token",
+          "label": "Verification Token",
+          "secret": true
+        },
+        {
+          "key": "encrypt_key",
+          "label": "Encrypt Key",
+          "secret": true,
+          "optional": true
+        }
+      ],
+      "defaults": {
+        "dmPolicy": "pairing",
+        "groupPolicy": "allowlist"
+      }
+    },
+    {
+      "id": "wecom",
+      "name": "WeCom",
+      "driver": "wecom",
+      "default_listen": "127.0.0.1:19092",
+      "default_path": "/wecom/events",
+      "notes": "Supports enterprise callback verification and optional robot webhook replies.",
+      "required_fields": [
+        {
+          "key": "corp_id",
+          "label": "Corp ID",
+          "secret": false,
+          "optional": true
+        },
+        {
+          "key": "agent_id",
+          "label": "Agent ID",
+          "secret": false,
+          "optional": true
+        },
+        {
+          "key": "secret",
+          "label": "Agent Secret / Webhook Key",
+          "secret": true,
+          "optional": true
+        },
+        {
+          "key": "token",
+          "label": "Callback Token",
+          "secret": true,
+          "optional": true
+        },
+        {
+          "key": "encoding_aes_key",
+          "label": "Encoding AES Key",
+          "secret": true,
+          "optional": true
+        },
+        {
+          "key": "webhook_url",
+          "label": "Webhook URL",
+          "secret": true,
+          "optional": true
+        }
+      ],
+      "defaults": {
+        "dmPolicy": "pairing",
+        "groupPolicy": "allowlist"
+      }
+    }
+  ]
+}
