@@ -456,12 +456,43 @@ func (w *Workflow) installDockerMode(ctx context.Context, info system.Info, stdo
 }
 
 func (w *Workflow) installNativeMode(ctx context.Context, info system.Info, mirrors MirrorSelection, stdout, stderr io.Writer) error {
-	env := map[string]string{
-		"NPM_CONFIG_REGISTRY": mirrors["npm_registry"].BaseURL,
-	}
 	if !info.HasOpenClaw {
-		if err := w.runCommand(ctx, "npm", []string{"install", "-g", "openclaw"}, env, "", stdout, stderr); err != nil {
-			return err
+		candidates := w.orderedMirrorCandidates("npm_registry", mirrors)
+		if len(candidates) == 0 {
+			candidates = []presets.MirrorCandidate{
+				{
+					Name:    "official",
+					BaseURL: "https://registry.npmjs.org",
+				},
+			}
+		}
+
+		var installErr error
+		for idx, candidate := range candidates {
+			registryURL := strings.TrimSpace(candidate.BaseURL)
+			if registryURL == "" {
+				continue
+			}
+
+			w.progressDetailf("Trying npm registry %s (%s)", mirrorCandidateLabel(candidate), registryURL)
+			env := map[string]string{
+				"NPM_CONFIG_REGISTRY": registryURL,
+				"npm_config_registry": registryURL,
+			}
+			installErr = w.runCommand(ctx, "npm", []string{"install", "-g", "openclaw"}, env, "", stdout, stderr)
+			if installErr == nil {
+				if idx > 0 {
+					w.progressDetailf("npm install succeeded after falling back to %s", mirrorCandidateLabel(candidate))
+				}
+				break
+			}
+
+			if idx < len(candidates)-1 {
+				w.progressDetailf("npm install failed with registry %s; retrying next candidate", mirrorCandidateLabel(candidate))
+			}
+		}
+		if installErr != nil {
+			return installErr
 		}
 	} else {
 		w.progressDetailf("OpenClaw is already installed; skipping npm global install")
@@ -471,6 +502,37 @@ func (w *Workflow) installNativeMode(ctx context.Context, info system.Info, mirr
 	}
 	w.progressDetailf("OpenClaw command is not on PATH yet; gateway start was skipped in this shell")
 	return nil
+}
+
+func (w *Workflow) orderedMirrorCandidates(category string, selected MirrorSelection) []presets.MirrorCandidate {
+	seen := map[string]struct{}{}
+	ordered := []presets.MirrorCandidate{}
+
+	if candidate, ok := selected[category]; ok {
+		ordered = appendUniqueMirrorCandidate(ordered, seen, candidate)
+	}
+
+	for _, candidate := range w.Presets.Mirrors.Categories[category] {
+		ordered = appendUniqueMirrorCandidate(ordered, seen, candidate)
+	}
+
+	return ordered
+}
+
+func appendUniqueMirrorCandidate(dst []presets.MirrorCandidate, seen map[string]struct{}, candidate presets.MirrorCandidate) []presets.MirrorCandidate {
+	key := strings.TrimSpace(candidate.Name) + "|" + strings.TrimSpace(candidate.BaseURL)
+	if _, ok := seen[key]; ok {
+		return dst
+	}
+	seen[key] = struct{}{}
+	return append(dst, candidate)
+}
+
+func mirrorCandidateLabel(candidate presets.MirrorCandidate) string {
+	if strings.TrimSpace(candidate.Name) != "" {
+		return candidate.Name
+	}
+	return candidate.BaseURL
 }
 
 func (w *Workflow) runPrivileged(ctx context.Context, info system.Info, cmd string, args []string, env map[string]string, dir string, stdout, stderr io.Writer) error {
