@@ -19,6 +19,10 @@ import (
 	"github.com/goodtiger/openclaw-install/presets"
 )
 
+// placeholderAPIKey 是配置文件中 API Key 的占位符值。
+// 写入配置前应校验是否仍为该值并提示用户填写。
+const placeholderAPIKey = "YOUR_API_KEY"
+
 func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 	if len(args) == 0 {
 		printHelp(out)
@@ -219,11 +223,11 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 		if state.Mode != "" {
 			defaultMode = install.Mode(state.Mode)
 		} else {
-			defaultMode = recommendedMode(info)
+			defaultMode = install.RecommendedMode(info)
 		}
 	}
 
-	mode, err := chooseMode(prompter, info, options.yes, defaultMode)
+	mode, err := chooseMode(prompter, options.yes, defaultMode)
 	if err != nil {
 		return err
 	}
@@ -260,7 +264,7 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 		if len(req.Channels) == 0 {
 			fmt.Fprintln(out, "通道：未启用")
 		} else {
-			fmt.Fprintf(out, "通道：%s\n", strings.Join(channelIDs(req.Channels), ", "))
+			fmt.Fprintf(out, "通道：%s\n", strings.Join(install.ChannelIDs(req.Channels), ", "))
 		}
 		confirm, err := prompter.AskYesNo("确认继续吗？", true)
 		if err != nil {
@@ -351,7 +355,7 @@ func runBridgeServe(args []string, out, errOut io.Writer) error {
 	return bridge.Serve(ctx, cfg, *channelFlag, out)
 }
 
-func chooseMode(prompter *ui.Prompter, _ system.Info, yes bool, defaultMode install.Mode) (install.Mode, error) {
+func chooseMode(prompter *ui.Prompter, yes bool, defaultMode install.Mode) (install.Mode, error) {
 	if yes {
 		return defaultMode, nil
 	}
@@ -402,7 +406,7 @@ func buildProviderConfig(prompter *ui.Prompter, preset presets.ProviderPreset, e
 	}
 
 	baseURL := firstNonEmpty(options.baseURL, existing.BaseURL, preset.BaseURL)
-	apiKey := firstNonEmpty(options.apiKey, existing.APIKey, os.Getenv(preset.APIKeyEnv), "YOUR_API_KEY")
+	apiKey := firstNonEmpty(options.apiKey, existing.APIKey, os.Getenv(preset.APIKeyEnv), placeholderAPIKey)
 	primaryModel := firstNonEmpty(options.primaryModel, existing.PrimaryModel, preset.DefaultModel)
 	if primaryModel == "" {
 		modelIDs := providerModelIDs(preset, cfg.Catalog)
@@ -464,80 +468,29 @@ func buildChannelSelections(prompter *ui.Prompter, bundle presets.Bundle, existi
 	selections := []config.ChannelSelection{}
 
 	for _, preset := range bundle.Channels {
-		defaultEnabled := slices.Contains(stateChannels, preset.ID) || preset.DefaultEnabled
-		enabled := false
-
-		switch {
-		case useFlagSelection:
-			enabled = slices.Contains(selectedIDs, preset.ID)
-		case yes:
-			enabled = defaultEnabled
-		default:
-			fmt.Fprintln(out, "")
-			var err error
-			enabled, err = prompter.AskYesNo("启用 "+preset.Name+" 吗？", defaultEnabled)
-			if err != nil {
-				return nil, err
-			}
+		enabled, err := resolveChannelEnabled(prompter, preset, stateChannels, selectedIDs, useFlagSelection, yes, out)
+		if err != nil {
+			return nil, err
 		}
-
 		if !enabled {
 			continue
 		}
 
 		existingChannel := existing.Channels[preset.ID]
-		listenAddr := firstNonEmpty(existingChannel.ListenAddr, preset.DefaultListen)
-		path := firstNonEmpty(existingChannel.Path, preset.DefaultPath)
 
-		if usesBridgeProvisioner(preset.Provisioner) && (!yes || useFlagSelection) {
-			var err error
-			listenAddr, err = prompter.AskString(preset.Name+" 监听地址", listenAddr, false)
-			if err != nil {
-				return nil, err
-			}
-			path, err = prompter.AskString(preset.Name+" 回调路径", path, false)
-			if err != nil {
-				return nil, err
-			}
+		listenAddr, path, err := collectNetworkConfig(prompter, preset, existingChannel, useFlagSelection, yes)
+		if err != nil {
+			return nil, err
 		}
 
-		fields := make(map[string]string, len(preset.RequiredFields))
-		for _, field := range preset.RequiredFields {
-			defaultValue := existingChannel.Fields[field.Key]
-			if yes && field.Optional {
-				fields[field.Key] = defaultValue
-				continue
-			}
-			value := defaultValue
-			var err error
-			value, err = prompter.AskString(field.Label, value, field.Secret)
-			if err != nil {
-				return nil, err
-			}
-			if strings.TrimSpace(value) == "" && !field.Optional {
-				return nil, fmt.Errorf("%s 需要填写 %s", preset.Name, field.Label)
-			}
-			fields[field.Key] = value
+		fields, err := collectCredentialFields(prompter, preset, existingChannel, yes)
+		if err != nil {
+			return nil, err
 		}
 
-		dmPolicy, _ := preset.Defaults["dmPolicy"].(string)
-		groupPolicy, _ := preset.Defaults["groupPolicy"].(string)
-		if existingChannel.DMPolicy != "" {
-			dmPolicy = existingChannel.DMPolicy
-		}
-		if existingChannel.GroupPolicy != "" {
-			groupPolicy = existingChannel.GroupPolicy
-		}
-		if !yes {
-			var err error
-			dmPolicy, err = prompter.AskString(preset.Name+" 私聊策略", dmPolicy, false)
-			if err != nil {
-				return nil, err
-			}
-			groupPolicy, err = prompter.AskString(preset.Name+" 群聊策略", groupPolicy, false)
-			if err != nil {
-				return nil, err
-			}
+		dmPolicy, groupPolicy, err := collectChannelPolicies(prompter, preset, existingChannel, yes)
+		if err != nil {
+			return nil, err
 		}
 
 		selections = append(selections, config.ChannelSelection{
@@ -557,6 +510,73 @@ func buildChannelSelections(prompter *ui.Prompter, bundle presets.Bundle, existi
 	}
 
 	return selections, nil
+}
+
+func resolveChannelEnabled(prompter *ui.Prompter, preset presets.ChannelPreset, stateChannels, selectedIDs []string, useFlagSelection, yes bool, out io.Writer) (bool, error) {
+	defaultEnabled := slices.Contains(stateChannels, preset.ID) || preset.DefaultEnabled
+	switch {
+	case useFlagSelection:
+		return slices.Contains(selectedIDs, preset.ID), nil
+	case yes:
+		return defaultEnabled, nil
+	default:
+		fmt.Fprintln(out, "")
+		return prompter.AskYesNo("启用 "+preset.Name+" 吗？", defaultEnabled)
+	}
+}
+
+func collectNetworkConfig(prompter *ui.Prompter, preset presets.ChannelPreset, existing config.BridgeChannelConfig, useFlagSelection, yes bool) (listenAddr, path string, err error) {
+	listenAddr = firstNonEmpty(existing.ListenAddr, preset.DefaultListen)
+	path = firstNonEmpty(existing.Path, preset.DefaultPath)
+	if !usesBridgeProvisioner(preset.Provisioner) || (yes && !useFlagSelection) {
+		return listenAddr, path, nil
+	}
+	listenAddr, err = prompter.AskString(preset.Name+" 监听地址", listenAddr, false)
+	if err != nil {
+		return "", "", err
+	}
+	path, err = prompter.AskString(preset.Name+" 回调路径", path, false)
+	return listenAddr, path, err
+}
+
+func collectCredentialFields(prompter *ui.Prompter, preset presets.ChannelPreset, existing config.BridgeChannelConfig, yes bool) (map[string]string, error) {
+	fields := make(map[string]string, len(preset.RequiredFields))
+	for _, field := range preset.RequiredFields {
+		defaultValue := existing.Fields[field.Key]
+		if yes && field.Optional {
+			fields[field.Key] = defaultValue
+			continue
+		}
+		value, err := prompter.AskString(field.Label, defaultValue, field.Secret)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(value) == "" && !field.Optional {
+			return nil, fmt.Errorf("%s 需要填写 %s", preset.Name, field.Label)
+		}
+		fields[field.Key] = value
+	}
+	return fields, nil
+}
+
+func collectChannelPolicies(prompter *ui.Prompter, preset presets.ChannelPreset, existing config.BridgeChannelConfig, yes bool) (dmPolicy, groupPolicy string, err error) {
+	dmPolicy, _ = preset.Defaults["dmPolicy"].(string)
+	groupPolicy, _ = preset.Defaults["groupPolicy"].(string)
+	if existing.DMPolicy != "" {
+		dmPolicy = existing.DMPolicy
+	}
+	if existing.GroupPolicy != "" {
+		groupPolicy = existing.GroupPolicy
+	}
+	if yes {
+		return dmPolicy, groupPolicy, nil
+	}
+	dmPolicy, err = prompter.AskString(preset.Name+" 私聊策略", dmPolicy, false)
+	if err != nil {
+		return "", "", err
+	}
+	groupPolicy, err = prompter.AskString(preset.Name+" 群聊策略", groupPolicy, false)
+	return dmPolicy, groupPolicy, err
 }
 
 func loadExistingBridgeConfig(path string) (config.BridgeConfig, error) {
@@ -582,14 +602,6 @@ func parseCSV(raw string) []string {
 			continue
 		}
 		out = append(out, part)
-	}
-	return out
-}
-
-func channelIDs(channels []config.ChannelSelection) []string {
-	out := make([]string, 0, len(channels))
-	for _, channel := range channels {
-		out = append(out, channel.ID)
 	}
 	return out
 }
@@ -633,16 +645,6 @@ func flagSetHasOptions(fs *flag.FlagSet) bool {
 		hasOptions = true
 	})
 	return hasOptions
-}
-
-func recommendedMode(info system.Info) install.Mode {
-	if info.OS == "windows" {
-		return install.ModeDocker
-	}
-	if info.HasDocker && info.HasCompose {
-		return install.ModeDocker
-	}
-	return install.ModeNative
 }
 
 func sortedKeys(input map[string]string) []string {

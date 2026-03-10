@@ -140,7 +140,6 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 	defer resetProgress()
 
 	w.progressStep("准备工作目录")
-
 	if err := config.EnsureDir(info.OpenClawHome); err != nil {
 		return Result{}, err
 	}
@@ -162,7 +161,6 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 	}
 
 	w.progressStep("解析镜像源")
-
 	mirrors, mirrorWarnings := w.ResolveMirrors(ctx)
 	result.MirrorNames = mirrorNames(mirrors)
 	result.Warnings = append(result.Warnings, mirrorWarnings...)
@@ -179,61 +177,11 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 		return Result{}, err
 	}
 
-	input := config.ManagedConfigInput{
-		InstallerVersion: req.AppVersion,
-		Mode:             req.Mode.String(),
-		GatewayBind:      gatewayBindForMode(req.Mode),
-		BridgeHost:       bridgeHostForMode(req.Mode),
-		Provider:         req.Provider,
-		Channels:         req.Channels,
-		ManagedAt:        w.Now(),
-		MirrorNames:      result.MirrorNames,
-	}
-
-	existingConfig, err := config.LoadMap(info.ConfigPath)
-	if err != nil {
-		return Result{}, err
-	}
-	managedConfig := config.BuildManagedConfig(input)
-	finalConfig := config.ApplyManagedConfig(existingConfig, managedConfig, previousState)
-
-	w.progressStep("写入配置文件")
-	if err := config.SaveJSONAtomic(info.ConfigPath, finalConfig); err != nil {
-		return Result{}, err
-	}
-	w.progressDetailf("OpenClaw 配置 -> %s", info.ConfigPath)
-
-	if err := config.SaveJSONAtomic(info.BridgeConfigPath, config.BuildBridgeConfig(input)); err != nil {
-		return Result{}, err
-	}
-	w.progressDetailf("Bridge 配置 -> %s", info.BridgeConfigPath)
-
-	w.progressStep("生成运行时文件")
-	assetWarnings, err := w.writeAssets(ctx, info, req, previousState, mirrors, stdout, stderr)
+	assetWarnings, err := w.applyConfigAndAssets(ctx, info, req, previousState, mirrors, result.MirrorNames, stdout, stderr)
 	if err != nil {
 		return Result{}, err
 	}
 	result.Warnings = append(result.Warnings, assetWarnings...)
-	w.progressDetailf("运行时文件 -> %s", info.RuntimeDir)
-
-	state := config.InstallState{
-		Version:           req.AppVersion,
-		InstalledAt:       w.Now().UTC(),
-		Mode:              req.Mode.String(),
-		Platform:          info.OS + "/" + info.Arch,
-		ManagedProviderID: req.Provider.ID,
-		ManagedChannels:   channelIDs(req.Channels),
-		MirrorNames:       result.MirrorNames,
-		RuntimeDir:        info.RuntimeDir,
-		ConfigPath:        info.ConfigPath,
-		BridgeConfigPath:  info.BridgeConfigPath,
-	}
-
-	w.progressStep("保存安装状态")
-	if err := config.SaveInstallState(info.StatePath, state); err != nil {
-		return Result{}, err
-	}
-	w.progressDetailf("安装状态 -> %s", info.StatePath)
 
 	if !req.SkipInstall {
 		w.progressStep("安装依赖")
@@ -268,9 +216,71 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 	return result, nil
 }
 
+// applyConfigAndAssets 构建并写入配置文件、生成运行时文件、保存安装状态。
+func (w *Workflow) applyConfigAndAssets(ctx context.Context, info system.Info, req Request, previousState config.InstallState, mirrors MirrorSelection, mirrorNames map[string]string, stdout, stderr io.Writer) (warnings []string, err error) {
+	input := config.ManagedConfigInput{
+		InstallerVersion: req.AppVersion,
+		Mode:             req.Mode.String(),
+		GatewayBind:      gatewayBindForMode(req.Mode),
+		BridgeHost:       bridgeHostForMode(req.Mode),
+		Provider:         req.Provider,
+		Channels:         req.Channels,
+		ManagedAt:        w.Now(),
+		MirrorNames:      mirrorNames,
+	}
+
+	existingConfig, err := config.LoadMap(info.ConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	managedConfig := config.BuildManagedConfig(input)
+	finalConfig := config.ApplyManagedConfig(existingConfig, managedConfig, previousState)
+
+	w.progressStep("写入配置文件")
+	if err := config.SaveJSONAtomic(info.ConfigPath, finalConfig); err != nil {
+		return nil, err
+	}
+	w.progressDetailf("OpenClaw 配置 -> %s", info.ConfigPath)
+
+	if err := config.SaveJSONAtomic(info.BridgeConfigPath, config.BuildBridgeConfig(input)); err != nil {
+		return nil, err
+	}
+	w.progressDetailf("Bridge 配置 -> %s", info.BridgeConfigPath)
+
+	w.progressStep("生成运行时文件")
+	assetWarnings, err := w.writeAssets(ctx, info, req, previousState, mirrors, stdout, stderr)
+	if err != nil {
+		return nil, err
+	}
+	warnings = append(warnings, assetWarnings...)
+	w.progressDetailf("运行时文件 -> %s", info.RuntimeDir)
+
+	state := config.InstallState{
+		Version:           req.AppVersion,
+		InstalledAt:       w.Now().UTC(),
+		Mode:              req.Mode.String(),
+		Platform:          info.OS + "/" + info.Arch,
+		ManagedProviderID: req.Provider.ID,
+		ManagedChannels:   channelIDs(req.Channels),
+		MirrorNames:       mirrorNames,
+		RuntimeDir:        info.RuntimeDir,
+		ConfigPath:        info.ConfigPath,
+		BridgeConfigPath:  info.BridgeConfigPath,
+	}
+
+	w.progressStep("保存安装状态")
+	if err := config.SaveInstallState(info.StatePath, state); err != nil {
+		return nil, err
+	}
+	w.progressDetailf("安装状态 -> %s", info.StatePath)
+
+	return warnings, nil
+}
+
 func (w *Workflow) Reconfigure(ctx context.Context, info system.Info, req Request, stdout, stderr io.Writer) (Result, error) {
-	req.SkipInstall = true
-	return w.Install(ctx, info, req, stdout, stderr)
+	reconfigReq := req
+	reconfigReq.SkipInstall = true
+	return w.Install(ctx, info, reconfigReq, stdout, stderr)
 }
 
 func (r *Request) Validate(info system.Info) error {
@@ -547,7 +557,8 @@ func (w *Workflow) runPrivileged(ctx context.Context, info system.Info, cmd stri
 	return w.runCommand(ctx, "sudo", append([]string{cmd}, args...), env, dir, stdout, stderr)
 }
 
-func recommendedMode(info system.Info) Mode {
+// RecommendedMode 根据当前系统环境返回建议的安装模式。
+func RecommendedMode(info system.Info) Mode {
 	if info.OS == "windows" {
 		return ModeDocker
 	}
@@ -556,6 +567,9 @@ func recommendedMode(info system.Info) Mode {
 	}
 	return ModeNative
 }
+
+// recommendedMode 内部别名，保留向后兼容。
+func recommendedMode(info system.Info) Mode { return RecommendedMode(info) }
 
 func mirrorNames(selection MirrorSelection) map[string]string {
 	names := make(map[string]string, len(selection))
@@ -613,7 +627,8 @@ func flattenEnv(env map[string]string) []string {
 	return out
 }
 
-func channelIDs(channels []config.ChannelSelection) []string {
+// ChannelIDs 从 ChannelSelection 切片提取排序后的 ID 列表。
+func ChannelIDs(channels []config.ChannelSelection) []string {
 	out := make([]string, 0, len(channels))
 	for _, channel := range channels {
 		out = append(out, channel.ID)
@@ -621,6 +636,9 @@ func channelIDs(channels []config.ChannelSelection) []string {
 	sort.Strings(out)
 	return out
 }
+
+// channelIDs 内部别名。
+func channelIDs(channels []config.ChannelSelection) []string { return ChannelIDs(channels) }
 
 func hasBridgeChannels(channels []config.ChannelSelection) bool {
 	for _, channel := range channels {

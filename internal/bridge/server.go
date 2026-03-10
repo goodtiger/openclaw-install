@@ -10,9 +10,15 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goodtiger/openclaw-install/internal/config"
+)
+
+const (
+	maxRequestBodySize = 1 << 20        // 1 MB
+	eventDedupeWindow  = 5 * time.Minute
 )
 
 type Completer interface {
@@ -20,10 +26,11 @@ type Completer interface {
 }
 
 type Server struct {
-	cfg       config.BridgeConfig
-	completer Completer
-	client    *http.Client
-	logger    *log.Logger
+	cfg          config.BridgeConfig
+	completer    Completer
+	client       *http.Client
+	logger       *log.Logger
+	seenEventIDs sync.Map // string → time.Time，用于飞书消息去重
 }
 
 type OpenAICompatibleClient struct {
@@ -58,6 +65,23 @@ func NewServer(cfg config.BridgeConfig, completer Completer, httpClient *http.Cl
 	}
 }
 
+// isSeenEvent 检查 eventID 是否在去重窗口内已处理过。
+// 首次见到返回 false 并记录；窗口内重复出现返回 true。
+func (s *Server) isSeenEvent(eventID string) bool {
+	if eventID == "" {
+		return false
+	}
+	now := time.Now()
+	if val, ok := s.seenEventIDs.Load(eventID); ok {
+		if now.Sub(val.(time.Time)) < eventDedupeWindow {
+			return true
+		}
+		s.seenEventIDs.Delete(eventID)
+	}
+	s.seenEventIDs.Store(eventID, now)
+	return false
+}
+
 func Serve(ctx context.Context, cfg config.BridgeConfig, channel string, logOutput io.Writer) error {
 	server := NewServer(cfg, nil, nil, logOutput)
 	channelCfg, ok := cfg.Channels[channel]
@@ -80,7 +104,9 @@ func Serve(ctx context.Context, cfg config.BridgeConfig, channel string, logOutp
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = httpServer.Shutdown(shutdownCtx)
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			server.logger.Printf("关闭服务器时出错：%v", err)
+		}
 	}()
 
 	go func() {
@@ -96,16 +122,29 @@ func Serve(ctx context.Context, cfg config.BridgeConfig, channel string, logOutp
 	return <-errCh
 }
 
+// channelHandlerFactory 根据渠道配置生成对应的 HTTP 处理函数。
+type channelHandlerFactory func(config.BridgeChannelConfig) http.HandlerFunc
+
 func (s *Server) Handler(channel string) (http.Handler, error) {
 	channelCfg, ok := s.cfg.Channels[channel]
 	if !ok {
-		return nil, fmt.Errorf("unknown channel %q", channel)
+		return nil, fmt.Errorf("未知渠道 %q", channel)
 	}
 	if !channelCfg.Enabled {
-		return nil, fmt.Errorf("channel %q is disabled", channel)
+		return nil, fmt.Errorf("渠道 %q 已禁用", channel)
 	}
 	if strings.TrimSpace(channelCfg.Provisioner) != "" && channelCfg.Provisioner != "bridge" {
-		return nil, fmt.Errorf("channel %q is configured via %s, not via the bridge server", channel, channelCfg.Provisioner)
+		return nil, fmt.Errorf("渠道 %q 通过 %s 配置，不使用 bridge 服务器", channel, channelCfg.Provisioner)
+	}
+
+	factories := map[string]channelHandlerFactory{
+		"qq":     s.handleQQ,
+		"feishu": s.handleFeishu,
+		"wecom":  s.handleWeCom,
+	}
+	factory, ok := factories[channel]
+	if !ok {
+		return nil, fmt.Errorf("不支持的渠道 %q", channel)
 	}
 
 	mux := http.NewServeMux()
@@ -115,17 +154,7 @@ func (s *Server) Handler(channel string) (http.Handler, error) {
 			"channel": channel,
 		})
 	})
-
-	switch channel {
-	case "qq":
-		mux.HandleFunc(channelCfg.Path, s.handleQQ(channelCfg))
-	case "feishu":
-		mux.HandleFunc(channelCfg.Path, s.handleFeishu(channelCfg))
-	case "wecom":
-		mux.HandleFunc(channelCfg.Path, s.handleWeCom(channelCfg))
-	default:
-		return nil, fmt.Errorf("unsupported channel %q", channel)
-	}
+	mux.HandleFunc(channelCfg.Path, factory(channelCfg))
 
 	return mux, nil
 }
@@ -142,7 +171,7 @@ func (s *Server) handleQQ(channelCfg config.BridgeChannelConfig) http.HandlerFun
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "不支持的请求方法", http.StatusMethodNotAllowed)
 			return
 		}
 
@@ -153,14 +182,15 @@ func (s *Server) handleQQ(channelCfg config.BridgeChannelConfig) http.HandlerFun
 				r.Header.Get("X-Self-Token"),
 			}
 			if accessToken != headerValues[0] && accessToken != headerValues[1] {
-				http.Error(w, "invalid access token", http.StatusForbidden)
+				http.Error(w, "无效的 access token", http.StatusForbidden)
 				return
 			}
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 		var payload event
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+			http.Error(w, "无效的请求体", http.StatusBadRequest)
 			return
 		}
 
@@ -170,18 +200,15 @@ func (s *Server) handleQQ(channelCfg config.BridgeChannelConfig) http.HandlerFun
 		}
 		reply, err := s.completer.Complete(r.Context(), text)
 		if err != nil {
-			http.Error(w, "completion failed: "+err.Error(), http.StatusBadGateway)
+			http.Error(w, "模型调用失败", http.StatusBadGateway)
 			return
 		}
 
 		if err := s.sendQQReply(r.Context(), channelCfg, payload.MessageType, payload.UserID, payload.GroupID, reply); err != nil {
-			s.logger.Printf("qq reply send failed: %v", err)
+			s.logger.Printf("qq 回复发送失败：%v", err)
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":    true,
-			"reply": reply,
-		})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }
 
@@ -191,6 +218,7 @@ func (s *Server) handleFeishu(channelCfg config.BridgeChannelConfig) http.Handle
 		Token     string `json:"token"`
 		Header    struct {
 			EventType string `json:"event_type"`
+			EventID   string `json:"event_id"`
 		} `json:"header"`
 		Event struct {
 			Message struct {
@@ -206,13 +234,14 @@ func (s *Server) handleFeishu(channelCfg config.BridgeChannelConfig) http.Handle
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "不支持的请求方法", http.StatusMethodNotAllowed)
 			return
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 		var payload envelope
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+			http.Error(w, "无效的请求体", http.StatusBadRequest)
 			return
 		}
 
@@ -222,25 +251,28 @@ func (s *Server) handleFeishu(channelCfg config.BridgeChannelConfig) http.Handle
 		}
 
 		if token := channelCfg.Fields["verification_token"]; token != "" && payload.Token != "" && payload.Token != token {
-			http.Error(w, "invalid verification token", http.StatusForbidden)
+			http.Error(w, "验证 token 无效", http.StatusForbidden)
+			return
+		}
+
+		// 飞书采用 at-least-once 投递，用 event_id 去重
+		if s.isSeenEvent(payload.Header.EventID) {
+			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 			return
 		}
 
 		text := parseFeishuText(payload.Event.Message.Content)
 		reply, err := s.completer.Complete(r.Context(), text)
 		if err != nil {
-			http.Error(w, "completion failed: "+err.Error(), http.StatusBadGateway)
+			http.Error(w, "模型调用失败", http.StatusBadGateway)
 			return
 		}
 
 		if err := s.sendFeishuReply(r.Context(), channelCfg, payload.Event.Sender.SenderID.OpenID, reply); err != nil {
-			s.logger.Printf("feishu reply send failed: %v", err)
+			s.logger.Printf("飞书回复发送失败：%v", err)
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{
-			"code":  0,
-			"reply": reply,
-		})
+		writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 	}
 }
 
@@ -257,31 +289,29 @@ func (s *Server) handleWeCom(channelCfg config.BridgeChannelConfig) http.Handler
 		}
 
 		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "不支持的请求方法", http.StatusMethodNotAllowed)
 			return
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			http.Error(w, "failed to read body", http.StatusBadRequest)
+			http.Error(w, "读取请求体失败", http.StatusBadRequest)
 			return
 		}
 
 		text := parseWeComText(body)
 		reply, err := s.completer.Complete(r.Context(), text)
 		if err != nil {
-			http.Error(w, "completion failed: "+err.Error(), http.StatusBadGateway)
+			http.Error(w, "模型调用失败", http.StatusBadGateway)
 			return
 		}
 
 		if err := s.sendWeComReply(r.Context(), channelCfg, reply); err != nil {
-			s.logger.Printf("wecom reply send failed: %v", err)
+			s.logger.Printf("企微回复发送失败：%v", err)
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":    true,
-			"reply": reply,
-		})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}
 }
 
