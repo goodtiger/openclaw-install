@@ -118,10 +118,10 @@ func (w *Workflow) Doctor(ctx context.Context, info system.Info) (DoctorReport, 
 
 	warnings := append([]string{}, mirrorWarnings...)
 	if info.PackageManager == "" && !info.HasNode && !info.HasDocker {
-		warnings = append(warnings, "no supported package manager detected; automatic dependency installation may fail")
+		warnings = append(warnings, "未检测到受支持的包管理器，自动安装依赖可能失败")
 	}
 	if info.OS == "windows" && !info.HasDocker {
-		warnings = append(warnings, "Windows v1 only supports Docker mode, but Docker is not currently detected")
+		warnings = append(warnings, "Windows 默认更推荐 Docker 模式；如果要使用 native，请先确保 Node.js/npm 可用")
 	}
 
 	return DoctorReport{
@@ -139,7 +139,7 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 	resetProgress := w.beginProgress(stdout, req)
 	defer resetProgress()
 
-	w.progressStep("Preparing workspace")
+	w.progressStep("准备工作目录")
 
 	if err := config.EnsureDir(info.OpenClawHome); err != nil {
 		return Result{}, err
@@ -158,19 +158,19 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 	}
 	result.BackupFile = backupFile
 	if backupFile != "" {
-		w.progressDetailf("Existing config backed up to %s", backupFile)
+		w.progressDetailf("已备份现有配置到 %s", backupFile)
 	}
 
-	w.progressStep("Resolving mirrors")
+	w.progressStep("解析镜像源")
 
 	mirrors, mirrorWarnings := w.ResolveMirrors(ctx)
 	result.MirrorNames = mirrorNames(mirrors)
 	result.Warnings = append(result.Warnings, mirrorWarnings...)
 	if len(result.MirrorNames) == 0 {
-		w.progressDetailf("No mirror categories defined; using built-in defaults")
+		w.progressDetailf("未定义镜像分类，使用内置默认值")
 	} else {
 		for _, key := range sortedStringMapKeys(result.MirrorNames) {
-			w.progressDetailf("%s: %s", key, result.MirrorNames[key])
+			w.progressDetailf("%s：%s", key, result.MirrorNames[key])
 		}
 	}
 
@@ -197,24 +197,24 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 	managedConfig := config.BuildManagedConfig(input)
 	finalConfig := config.ApplyManagedConfig(existingConfig, managedConfig, previousState)
 
-	w.progressStep("Writing configuration files")
+	w.progressStep("写入配置文件")
 	if err := config.SaveJSONAtomic(info.ConfigPath, finalConfig); err != nil {
 		return Result{}, err
 	}
-	w.progressDetailf("OpenClaw config -> %s", info.ConfigPath)
+	w.progressDetailf("OpenClaw 配置 -> %s", info.ConfigPath)
 
 	if err := config.SaveJSONAtomic(info.BridgeConfigPath, config.BuildBridgeConfig(input)); err != nil {
 		return Result{}, err
 	}
-	w.progressDetailf("Bridge config -> %s", info.BridgeConfigPath)
+	w.progressDetailf("Bridge 配置 -> %s", info.BridgeConfigPath)
 
-	w.progressStep("Generating runtime assets")
+	w.progressStep("生成运行时文件")
 	assetWarnings, err := w.writeAssets(ctx, info, req, previousState, mirrors, stdout, stderr)
 	if err != nil {
 		return Result{}, err
 	}
 	result.Warnings = append(result.Warnings, assetWarnings...)
-	w.progressDetailf("Runtime assets -> %s", info.RuntimeDir)
+	w.progressDetailf("运行时文件 -> %s", info.RuntimeDir)
 
 	state := config.InstallState{
 		Version:           req.AppVersion,
@@ -229,26 +229,26 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 		BridgeConfigPath:  info.BridgeConfigPath,
 	}
 
-	w.progressStep("Saving installer state")
+	w.progressStep("保存安装状态")
 	if err := config.SaveInstallState(info.StatePath, state); err != nil {
 		return Result{}, err
 	}
-	w.progressDetailf("Install state -> %s", info.StatePath)
+	w.progressDetailf("安装状态 -> %s", info.StatePath)
 
 	if !req.SkipInstall {
-		w.progressStep("Installing dependencies")
+		w.progressStep("安装依赖")
 		if err := w.installDependencies(ctx, info, req.Mode, stdout, stderr); err != nil {
 			return result, err
 		}
-		w.progressStep("Installing OpenClaw runtime")
+		w.progressStep("安装 OpenClaw 运行时")
 		if err := w.installOpenClaw(ctx, info, req.Mode, mirrors, stdout, stderr); err != nil {
 			return result, err
 		}
 	}
 
-	w.progressStep("Configuring channels")
+	w.progressStep("配置通道")
 	if len(req.Channels) == 0 {
-		w.progressDetailf("No channels selected")
+		w.progressDetailf("未启用任何通道")
 	}
 	channelWarnings, err := w.syncChannels(ctx, info, req, previousState, stdout, stderr)
 	result.Warnings = append(result.Warnings, channelWarnings...)
@@ -257,7 +257,7 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 	}
 
 	if !req.SkipVerify {
-		w.progressStep("Verifying installation")
+		w.progressStep("验证安装结果")
 		verifyWarnings, err := w.verify(ctx, info, req, stdout, stderr)
 		result.Warnings = append(result.Warnings, verifyWarnings...)
 		if err != nil {
@@ -273,30 +273,27 @@ func (w *Workflow) Reconfigure(ctx context.Context, info system.Info, req Reques
 	return w.Install(ctx, info, req, stdout, stderr)
 }
 
-func (r Request) Validate(info system.Info) error {
+func (r *Request) Validate(info system.Info) error {
 	if r.Mode == "" {
 		r.Mode = recommendedMode(info)
 	}
-	if info.OS == "windows" && r.Mode == ModeNative {
-		return errors.New("Windows v1 only supports Docker mode")
-	}
 	if r.AppVersion == "" {
-		return errors.New("app version is required")
+		return errors.New("缺少安装器版本号")
 	}
 	if strings.TrimSpace(r.Provider.ID) == "" {
-		return errors.New("provider id is required")
+		return errors.New("缺少供应商 ID")
 	}
 	if strings.TrimSpace(r.Provider.Name) == "" {
-		return errors.New("provider name is required")
+		return errors.New("缺少供应商名称")
 	}
 	if strings.TrimSpace(r.Provider.Type) == "" {
 		r.Provider.Type = "openai-compatible"
 	}
 	if strings.TrimSpace(r.Provider.BaseURL) == "" {
-		return errors.New("provider base URL is required")
+		return errors.New("缺少供应商 Base URL")
 	}
 	if strings.TrimSpace(r.Provider.PrimaryModel) == "" {
-		return errors.New("primary model is required")
+		return errors.New("缺少主模型")
 	}
 	return nil
 }
@@ -308,7 +305,7 @@ func (w *Workflow) installDependencies(ctx context.Context, info system.Info, mo
 	case ModeNative:
 		return w.ensureNode(ctx, info, stdout, stderr)
 	default:
-		return fmt.Errorf("unsupported mode %s", mode)
+		return fmt.Errorf("不支持的安装模式 %s", mode)
 	}
 }
 
@@ -319,17 +316,17 @@ func (w *Workflow) installOpenClaw(ctx context.Context, info system.Info, mode M
 	case ModeNative:
 		return w.installNativeMode(ctx, info, mirrors, stdout, stderr)
 	default:
-		return fmt.Errorf("unsupported mode %s", mode)
+		return fmt.Errorf("不支持的安装模式 %s", mode)
 	}
 }
 
 func (w *Workflow) verify(ctx context.Context, info system.Info, req Request, stdout, stderr io.Writer) ([]string, error) {
 	warnings := []string{}
 	if _, err := config.LoadMap(info.ConfigPath); err != nil {
-		return warnings, fmt.Errorf("verify config %s: %w", info.ConfigPath, err)
+		return warnings, fmt.Errorf("校验配置文件 %s 失败: %w", info.ConfigPath, err)
 	}
 	if _, err := config.LoadBridgeConfig(info.BridgeConfigPath); err != nil {
-		return warnings, fmt.Errorf("verify bridge config %s: %w", info.BridgeConfigPath, err)
+		return warnings, fmt.Errorf("校验桥接配置 %s 失败: %w", info.BridgeConfigPath, err)
 	}
 
 	switch req.Mode {
@@ -340,30 +337,29 @@ func (w *Workflow) verify(ctx context.Context, info system.Info, req Request, st
 		}
 		args = append(args, "-f", filepath.Join(info.RuntimeDir, "compose.yaml"), "config")
 		if err := w.runCommand(ctx, cmd, args, nil, info.RuntimeDir, stdout, stderr); err != nil {
-			return warnings, fmt.Errorf("docker compose verify failed: %w", err)
+			return warnings, fmt.Errorf("docker compose 校验失败: %w", err)
 		}
 	}
 
 	switch req.Mode {
 	case ModeNative:
-		if system.HasCommand("openclaw") {
-			if err := w.runCommand(ctx, "openclaw", []string{"config", "validate"}, nil, "", stdout, stderr); err != nil {
-				return warnings, fmt.Errorf("openclaw config validate failed: %w", err)
-			}
-		} else {
-			warnings = append(warnings, "openclaw executable is not on PATH yet; restart the shell before retrying")
+		openClawPath, err := w.resolveOpenClawExecutable(ctx, info, io.Discard)
+		if err != nil {
+			warnings = append(warnings, "当前环境还找不到 openclaw，可重开终端后再试")
+		} else if err := w.runCommand(ctx, openClawPath, []string{"config", "validate"}, nil, "", stdout, stderr); err != nil {
+			return warnings, fmt.Errorf("openclaw 配置校验失败: %w", err)
 		}
 	case ModeDocker:
 		if err := w.runOpenClawCommand(ctx, info, req.Mode, []string{"config", "validate"}, stdout, stderr); err != nil {
-			return warnings, fmt.Errorf("openclaw config validate failed: %w", err)
+			return warnings, fmt.Errorf("openclaw 配置校验失败: %w", err)
 		}
 	}
 
 	if hasBridgeChannels(req.Channels) {
-		warnings = append(warnings, "bridge services were configured on the host side; verify health with `openclaw-install bridge serve --channel <name>` or your service manager")
+		warnings = append(warnings, "已在宿主机侧配置 bridge 服务；可用 `openclaw-install bridge serve --channel <name>` 或系统服务管理器检查状态")
 	}
 	if hasPluginChannels(req.Channels) {
-		warnings = append(warnings, "plugin-backed channels were configured through the OpenClaw CLI; check them with `openclaw channels list`")
+		warnings = append(warnings, "插件型通道已通过 OpenClaw CLI 配置，可用 `openclaw channels list` 检查")
 	}
 
 	return warnings, nil
@@ -371,7 +367,7 @@ func (w *Workflow) verify(ctx context.Context, info system.Info, req Request, st
 
 func (w *Workflow) ensureDocker(ctx context.Context, info system.Info, stdout, stderr io.Writer) error {
 	if info.HasDocker && info.HasCompose {
-		w.progressDetailf("Docker and docker compose are already available")
+		w.progressDetailf("Docker 和 docker compose 已可用")
 		return nil
 	}
 
@@ -400,7 +396,7 @@ func (w *Workflow) ensureDocker(ctx context.Context, info system.Info, stdout, s
 			return err
 		}
 	default:
-		return errors.New("Docker is not installed and no supported package manager is available")
+		return errors.New("未安装 Docker，且没有可用的包管理器用于自动安装")
 	}
 
 	if info.OS == "linux" && system.HasCommand("systemctl") {
@@ -411,7 +407,7 @@ func (w *Workflow) ensureDocker(ctx context.Context, info system.Info, stdout, s
 
 func (w *Workflow) ensureNode(ctx context.Context, info system.Info, stdout, stderr io.Writer) error {
 	if info.HasNode && info.HasNPM {
-		w.progressDetailf("Node.js and npm are already available")
+		w.progressDetailf("Node.js 和 npm 已可用")
 		return nil
 	}
 
@@ -440,7 +436,7 @@ func (w *Workflow) ensureNode(ctx context.Context, info system.Info, stdout, std
 			return err
 		}
 	default:
-		return errors.New("Node.js/npm is not installed and no supported package manager is available")
+		return errors.New("未安装 Node.js/npm，且没有可用的包管理器用于自动安装")
 	}
 
 	return nil
@@ -456,7 +452,13 @@ func (w *Workflow) installDockerMode(ctx context.Context, info system.Info, stdo
 }
 
 func (w *Workflow) installNativeMode(ctx context.Context, info system.Info, mirrors MirrorSelection, stdout, stderr io.Writer) error {
-	if !info.HasOpenClaw {
+	openClawPath, err := w.resolveOpenClawExecutable(ctx, info, io.Discard)
+	if err != nil {
+		npmPath, npmErr := w.resolveNPMExecutable(info)
+		if npmErr != nil {
+			return npmErr
+		}
+
 		candidates := w.orderedMirrorCandidates("npm_registry", mirrors)
 		if len(candidates) == 0 {
 			candidates = []presets.MirrorCandidate{
@@ -474,34 +476,37 @@ func (w *Workflow) installNativeMode(ctx context.Context, info system.Info, mirr
 				continue
 			}
 
-			w.progressDetailf("Trying npm registry %s (%s)", mirrorCandidateLabel(candidate), registryURL)
+			w.progressDetailf("尝试 npm 源 %s (%s)", mirrorCandidateLabel(candidate), registryURL)
 			env := map[string]string{
 				"NPM_CONFIG_REGISTRY": registryURL,
 				"npm_config_registry": registryURL,
 			}
-			installErr = w.runCommand(ctx, "npm", []string{"install", "-g", "openclaw"}, env, "", stdout, stderr)
+			installErr = w.runCommand(ctx, npmPath, []string{"install", "-g", "openclaw"}, env, "", stdout, stderr)
 			if installErr == nil {
 				if idx > 0 {
-					w.progressDetailf("npm install succeeded after falling back to %s", mirrorCandidateLabel(candidate))
+					w.progressDetailf("切换到 %s 后 npm 安装成功", mirrorCandidateLabel(candidate))
 				}
 				break
 			}
 
 			if idx < len(candidates)-1 {
-				w.progressDetailf("npm install failed with registry %s; retrying next candidate", mirrorCandidateLabel(candidate))
+				w.progressDetailf("使用 %s 安装失败，继续尝试下一个源", mirrorCandidateLabel(candidate))
 			}
 		}
 		if installErr != nil {
 			return installErr
 		}
+
+		openClawPath, err = w.resolveOpenClawExecutable(ctx, info, stderr)
+		if err != nil {
+			w.progressDetailf("安装完成，但当前仍找不到 openclaw，已跳过 gateway start")
+			return nil
+		}
 	} else {
-		w.progressDetailf("OpenClaw is already installed; skipping npm global install")
+		w.progressDetailf("OpenClaw 已安装，跳过 npm 全局安装")
 	}
-	if system.HasCommand("openclaw") {
-		return w.runCommand(ctx, "openclaw", []string{"gateway", "start"}, nil, "", stdout, stderr)
-	}
-	w.progressDetailf("OpenClaw command is not on PATH yet; gateway start was skipped in this shell")
-	return nil
+
+	return w.runCommand(ctx, openClawPath, []string{"gateway", "start"}, nil, "", stdout, stderr)
 }
 
 func (w *Workflow) orderedMirrorCandidates(category string, selected MirrorSelection) []presets.MirrorCandidate {
@@ -588,7 +593,7 @@ func composeInvocation() (string, []string, error) {
 	if system.HasCommand("docker-compose") {
 		return "docker-compose", nil, nil
 	}
-	return "", nil, errors.New("docker compose is not available")
+	return "", nil, errors.New("docker compose 不可用")
 }
 
 func flattenEnv(env map[string]string) []string {

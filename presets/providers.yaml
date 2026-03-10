@@ -2,7 +2,7 @@
   "providers": [
     {
       "id": "bailian",
-      "name": "Alibaba Bailian Coding Plan",
+      "name": "阿里百炼 Coding Plan",
       "type": "openai-compatible",
       "base_url": "https://coding.dashscope.aliyuncs.com/v1",
       "api": "openai-completions",
@@ -92,7 +92,7 @@
           "maxTokens": 32768
         }
       ],
-      "notes": "Default provider preset. Uses Bailian coding plan endpoint with a curated coding-friendly model catalog."
+      "notes": "默认推荐预设，使用百炼 Coding Plan 接口，并内置一组偏编码场景的模型目录。"
     },
     {
       "id": "deepseek",
@@ -102,17 +102,17 @@
       "api_key_env": "DEEPSEEK_API_KEY",
       "default_model": "deepseek-chat",
       "models": ["deepseek-chat", "deepseek-reasoner"],
-      "notes": "Recommended for coding and reasoning in mainland China."
+      "notes": "适合中国大陆网络环境下的编码与推理场景。"
     },
     {
       "id": "zhipu",
-      "name": "Zhipu AI",
+      "name": "智谱 AI",
       "type": "openai-compatible",
       "base_url": "https://open.bigmodel.cn/api/paas/v4",
       "api_key_env": "ZHIPU_API_KEY",
       "default_model": "glm-4-plus",
       "models": ["glm-4-plus", "glm-4-air", "glm-4-flash"],
-      "notes": "GLM series via OpenAI-compatible API."
+      "notes": "通过 OpenAI-compatible 接口接入 GLM 系列模型。"
     },
     {
       "id": "moonshot",
@@ -122,27 +122,27 @@
       "api_key_env": "MOONSHOT_API_KEY",
       "default_model": "moonshot-v1-8k",
       "models": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
-      "notes": "Kimi-compatible long-context models."
+      "notes": "适合长上下文场景的 Kimi 兼容模型。"
     },
     {
       "id": "doubao",
-      "name": "Doubao",
+      "name": "豆包",
       "type": "openai-compatible",
       "base_url": "https://ark.cn-beijing.volces.com/api/v3",
       "api_key_env": "ARK_API_KEY",
       "default_model": "doubao-1-5-pro-32k",
       "models": ["doubao-1-5-pro-32k", "doubao-1-5-lite-32k", "doubao-pro-4k"],
-      "notes": "Volcengine ARK OpenAI-compatible endpoints."
+      "notes": "火山引擎 ARK 的 OpenAI-compatible 接口。"
     },
     {
       "id": "custom-openai",
-      "name": "Custom OpenAI Compatible",
+      "name": "自定义 OpenAI Compatible",
       "type": "openai-compatible",
       "base_url": "https://api.example.com/v1",
       "api_key_env": "OPENAI_COMPAT_API_KEY",
       "default_model": "gpt-4o-mini",
       "models": ["gpt-4o-mini"],
-      "notes": "For self-hosted gateways or enterprise-compatible endpoints."
+      "notes": "适用于自建网关或企业内部兼容接口。"
     }
   ]
 }

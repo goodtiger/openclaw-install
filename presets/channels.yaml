@@ -2,14 +2,14 @@
   "channels": [
     {
       "id": "qq",
-      "name": "QQ (qqbot plugin)",
+      "name": "QQ（qqbot 插件）",
       "driver": "qqbot",
       "provisioner": "openclaw-plugin",
       "default_enabled": true,
       "plugin_package": "@sliverp/qqbot@latest",
       "openclaw_channel": "qqbot",
       "token_fields": ["app_id", "app_secret"],
-      "notes": "Default QQ channel. Installs the @sliverp/qqbot plugin and runs `openclaw channels add --channel qqbot --token AppID:AppSecret`.",
+      "notes": "默认 QQ 通道，会安装 @sliverp/qqbot 插件，并执行 `openclaw channels add --channel qqbot --token AppID:AppSecret`。",
       "required_fields": [
         {
           "key": "app_id",
@@ -29,30 +29,30 @@
     },
     {
       "id": "feishu",
-      "name": "Feishu",
+      "name": "飞书",
       "driver": "feishu",
       "default_listen": "127.0.0.1:19091",
       "default_path": "/feishu/events",
-      "notes": "Uses event callback mode for Feishu apps and bots.",
+      "notes": "使用飞书应用/机器人的事件回调模式。",
       "required_fields": [
         {
           "key": "app_id",
-          "label": "Feishu App ID",
+          "label": "飞书 App ID",
           "secret": false
         },
         {
           "key": "app_secret",
-          "label": "Feishu App Secret",
+          "label": "飞书 App Secret",
           "secret": true
         },
         {
           "key": "verification_token",
-          "label": "Verification Token",
+          "label": "Verification Token（校验令牌）",
           "secret": true
         },
         {
           "key": "encrypt_key",
-          "label": "Encrypt Key",
+          "label": "Encrypt Key（加密密钥）",
           "secret": true,
           "optional": true
         }
@@ -64,45 +64,45 @@
     },
     {
       "id": "wecom",
-      "name": "WeCom",
+      "name": "企业微信",
       "driver": "wecom",
       "default_listen": "127.0.0.1:19092",
       "default_path": "/wecom/events",
-      "notes": "Supports enterprise callback verification and optional robot webhook replies.",
+      "notes": "支持企业应用回调校验，以及可选的机器人 Webhook 回复。",
       "required_fields": [
         {
           "key": "corp_id",
-          "label": "Corp ID",
+          "label": "Corp ID（企业 ID）",
           "secret": false,
           "optional": true
         },
         {
           "key": "agent_id",
-          "label": "Agent ID",
+          "label": "Agent ID（应用 ID）",
           "secret": false,
           "optional": true
         },
         {
           "key": "secret",
-          "label": "Agent Secret / Webhook Key",
+          "label": "Agent Secret / Webhook Key（应用密钥 / 机器人 Key）",
           "secret": true,
           "optional": true
         },
         {
           "key": "token",
-          "label": "Callback Token",
+          "label": "Callback Token（回调令牌）",
           "secret": true,
           "optional": true
         },
         {
           "key": "encoding_aes_key",
-          "label": "Encoding AES Key",
+          "label": "Encoding AES Key（加密 AES Key）",
           "secret": true,
           "optional": true
         },
         {
           "key": "webhook_url",
-          "label": "Webhook URL",
+          "label": "Webhook URL（机器人 Webhook 地址）",
           "secret": true,
           "optional": true
         }

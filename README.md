@@ -18,9 +18,9 @@
 
 - Linux：支持 `docker` 和 `native` 两种安装模式
 - macOS：支持 `docker` 和 `native` 两种安装模式
-- Windows：当前仅支持 `docker` 模式
+- Windows：支持 `docker` 和 `native`，但默认仍推荐 `docker`
 
-如果在 Windows 选择 `native` 模式，程序会直接报错并拒绝继续。
+如果你在 Windows 选择 `native` 模式，安装器会优先尝试直接使用本机的 Node.js/npm 和全局 OpenClaw CLI；首次装完 Node.js 后，建议重开一个终端再做后续手工排障。
 
 ### 1.2 安装模式说明
 
@@ -639,7 +639,7 @@ openclaw channels list
 
 当前 v1 的限制包括：
 
-- Windows 仅支持 Docker 模式
+- Windows 下仍然默认推荐 Docker；`native` 属于 best-effort 路径，首次安装 Node.js 后最好重开终端
 - `--yes` 不是完整无人值守安装
 - channel 侧仍然需要你自己提前准备平台凭证
 - 企业微信适配目前偏基础链路打通，不是完整平台集成

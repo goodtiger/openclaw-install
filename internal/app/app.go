@@ -34,39 +34,41 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		return 0
 	case "doctor":
 		if err := runDoctor(args[1:], out, errOut); err != nil {
-			fmt.Fprintln(errOut, "doctor:", err)
+			fmt.Fprintln(errOut, "doctor 执行失败：", err)
 			return 1
 		}
 		return 0
 	case "install":
 		if err := runInstall(args[1:], in, out, errOut); err != nil {
-			fmt.Fprintln(errOut, "install:", err)
+			fmt.Fprintln(errOut, "install 执行失败：", err)
 			return 1
 		}
 		return 0
 	case "reconfigure":
 		if err := runReconfigure(args[1:], in, out, errOut); err != nil {
-			fmt.Fprintln(errOut, "reconfigure:", err)
+			fmt.Fprintln(errOut, "reconfigure 执行失败：", err)
 			return 1
 		}
 		return 0
 	case "bridge":
 		if err := runBridge(args[1:], out, errOut); err != nil {
-			fmt.Fprintln(errOut, "bridge:", err)
+			fmt.Fprintln(errOut, "bridge 执行失败：", err)
 			return 1
 		}
 		return 0
 	default:
-		fmt.Fprintf(errOut, "unknown command: %s\n\n", args[0])
+		fmt.Fprintf(errOut, "未知命令：%s\n\n", args[0])
 		printHelp(errOut)
 		return 2
 	}
 }
 
 func runDoctor(args []string, out, errOut io.Writer) error {
-	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
-	fs.SetOutput(errOut)
+	fs := newFlagSet("doctor", errOut, "检查本机环境、依赖检测结果与镜像可达性。")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 
@@ -86,29 +88,29 @@ func runDoctor(args []string, out, errOut io.Writer) error {
 		return err
 	}
 
-	fmt.Fprintf(out, "System: %s/%s\n", report.Info.OS, report.Info.Arch)
-	fmt.Fprintf(out, "OpenClaw home: %s\n", report.Info.OpenClawHome)
-	fmt.Fprintf(out, "Config path: %s\n", report.Info.ConfigPath)
-	fmt.Fprintf(out, "Package manager: %s\n", valueOrDefault(report.Info.PackageManager, "not detected"))
-	fmt.Fprintf(out, "Recommended mode: %s\n", report.RecommendedMode)
+	fmt.Fprintf(out, "系统：%s/%s\n", report.Info.OS, report.Info.Arch)
+	fmt.Fprintf(out, "OpenClaw 目录：%s\n", report.Info.OpenClawHome)
+	fmt.Fprintf(out, "配置路径：%s\n", report.Info.ConfigPath)
+	fmt.Fprintf(out, "包管理器：%s\n", valueOrDefault(report.Info.PackageManager, "未检测到"))
+	fmt.Fprintf(out, "推荐模式：%s\n", report.RecommendedMode)
 	fmt.Fprintln(out, "")
-	fmt.Fprintln(out, "Detected tools:")
-	fmt.Fprintf(out, "  docker: %t\n", report.Info.HasDocker)
-	fmt.Fprintf(out, "  docker compose: %t\n", report.Info.HasCompose)
-	fmt.Fprintf(out, "  node: %t\n", report.Info.HasNode)
-	fmt.Fprintf(out, "  npm: %t\n", report.Info.HasNPM)
-	fmt.Fprintf(out, "  openclaw: %t\n", report.Info.HasOpenClaw)
-	fmt.Fprintf(out, "  git: %t\n", report.Info.HasGit)
-	fmt.Fprintf(out, "  curl: %t\n", report.Info.HasCurl)
+	fmt.Fprintln(out, "已检测工具：")
+	fmt.Fprintf(out, "  docker: %s\n", boolLabel(report.Info.HasDocker))
+	fmt.Fprintf(out, "  docker compose: %s\n", boolLabel(report.Info.HasCompose))
+	fmt.Fprintf(out, "  node: %s\n", boolLabel(report.Info.HasNode))
+	fmt.Fprintf(out, "  npm: %s\n", boolLabel(report.Info.HasNPM))
+	fmt.Fprintf(out, "  openclaw: %s\n", boolLabel(report.Info.HasOpenClaw))
+	fmt.Fprintf(out, "  git: %s\n", boolLabel(report.Info.HasGit))
+	fmt.Fprintf(out, "  curl: %s\n", boolLabel(report.Info.HasCurl))
 	fmt.Fprintln(out, "")
-	fmt.Fprintln(out, "Mirror selection:")
+	fmt.Fprintln(out, "镜像选择：")
 	keys := sortedKeys(report.MirrorNames)
 	for _, key := range keys {
-		fmt.Fprintf(out, "  %s: %s\n", key, report.MirrorNames[key])
+		fmt.Fprintf(out, "  %s：%s\n", key, report.MirrorNames[key])
 	}
 	if len(report.Warnings) > 0 {
 		fmt.Fprintln(out, "")
-		fmt.Fprintln(out, "Warnings:")
+		fmt.Fprintln(out, "警告：")
 		for _, warning := range report.Warnings {
 			fmt.Fprintf(out, "  - %s\n", warning)
 		}
@@ -117,20 +119,22 @@ func runDoctor(args []string, out, errOut io.Writer) error {
 }
 
 func runInstall(args []string, in io.Reader, out, errOut io.Writer) error {
-	fs := flag.NewFlagSet("install", flag.ContinueOnError)
-	fs.SetOutput(errOut)
+	fs := newFlagSet("install", errOut, "执行交互式安装流程。")
 
-	modeFlag := fs.String("mode", "", "install mode: docker or native")
-	providerFlag := fs.String("provider", "", "provider preset id")
-	baseURLFlag := fs.String("base-url", "", "provider base URL")
-	apiKeyFlag := fs.String("api-key", "", "provider API key")
-	primaryFlag := fs.String("primary-model", "", "primary model id")
-	fallbackFlag := fs.String("fallback-models", "", "comma-separated fallback models")
-	channelsFlag := fs.String("channels", "", "comma-separated channel ids")
-	yesFlag := fs.Bool("yes", false, "accept defaults where possible")
-	skipVerifyFlag := fs.Bool("skip-verify", false, "skip post-install verification")
+	modeFlag := fs.String("mode", "", "安装模式：docker 或 native")
+	providerFlag := fs.String("provider", "", "供应商预设 ID")
+	baseURLFlag := fs.String("base-url", "", "供应商 Base URL")
+	apiKeyFlag := fs.String("api-key", "", "供应商 API Key")
+	primaryFlag := fs.String("primary-model", "", "主模型 ID")
+	fallbackFlag := fs.String("fallback-models", "", "候选模型列表，逗号分隔")
+	channelsFlag := fs.String("channels", "", "通道 ID 列表，逗号分隔")
+	yesFlag := fs.Bool("yes", false, "尽量直接接受默认值")
+	skipVerifyFlag := fs.Bool("skip-verify", false, "跳过安装后的校验")
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 
@@ -149,20 +153,22 @@ func runInstall(args []string, in io.Reader, out, errOut io.Writer) error {
 }
 
 func runReconfigure(args []string, in io.Reader, out, errOut io.Writer) error {
-	fs := flag.NewFlagSet("reconfigure", flag.ContinueOnError)
-	fs.SetOutput(errOut)
+	fs := newFlagSet("reconfigure", errOut, "不重新安装 OpenClaw，仅重写 provider/channel 配置。")
 
-	modeFlag := fs.String("mode", "", "installation mode to keep using")
-	providerFlag := fs.String("provider", "", "provider preset id")
-	baseURLFlag := fs.String("base-url", "", "provider base URL")
-	apiKeyFlag := fs.String("api-key", "", "provider API key")
-	primaryFlag := fs.String("primary-model", "", "primary model id")
-	fallbackFlag := fs.String("fallback-models", "", "comma-separated fallback models")
-	channelsFlag := fs.String("channels", "", "comma-separated channel ids")
-	yesFlag := fs.Bool("yes", false, "accept defaults where possible")
-	skipVerifyFlag := fs.Bool("skip-verify", false, "skip verification after rewrite")
+	modeFlag := fs.String("mode", "", "继续使用的安装模式")
+	providerFlag := fs.String("provider", "", "供应商预设 ID")
+	baseURLFlag := fs.String("base-url", "", "供应商 Base URL")
+	apiKeyFlag := fs.String("api-key", "", "供应商 API Key")
+	primaryFlag := fs.String("primary-model", "", "主模型 ID")
+	fallbackFlag := fs.String("fallback-models", "", "候选模型列表，逗号分隔")
+	channelsFlag := fs.String("channels", "", "通道 ID 列表，逗号分隔")
+	yesFlag := fs.Bool("yes", false, "尽量直接接受默认值")
+	skipVerifyFlag := fs.Bool("skip-verify", false, "跳过重写配置后的校验")
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 
@@ -248,20 +254,20 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 
 	if !options.yes {
 		fmt.Fprintln(out, "")
-		fmt.Fprintf(out, "Mode: %s\n", req.Mode)
-		fmt.Fprintf(out, "Provider: %s (%s)\n", req.Provider.Name, req.Provider.ID)
-		fmt.Fprintf(out, "Primary model: %s\n", req.Provider.PrimaryModel)
+		fmt.Fprintf(out, "安装模式：%s\n", req.Mode)
+		fmt.Fprintf(out, "供应商：%s (%s)\n", req.Provider.Name, req.Provider.ID)
+		fmt.Fprintf(out, "主模型：%s\n", req.Provider.PrimaryModel)
 		if len(req.Channels) == 0 {
-			fmt.Fprintln(out, "Channels: none")
+			fmt.Fprintln(out, "通道：未启用")
 		} else {
-			fmt.Fprintf(out, "Channels: %s\n", strings.Join(channelIDs(req.Channels), ", "))
+			fmt.Fprintf(out, "通道：%s\n", strings.Join(channelIDs(req.Channels), ", "))
 		}
-		confirm, err := prompter.AskYesNo("Proceed?", true)
+		confirm, err := prompter.AskYesNo("确认继续吗？", true)
 		if err != nil {
 			return err
 		}
 		if !confirm {
-			return errors.New("cancelled")
+			return errors.New("已取消")
 		}
 	}
 
@@ -280,19 +286,19 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 
 	fmt.Fprintln(out, "")
 	if options.reconfigure {
-		fmt.Fprintln(out, "Reconfiguration completed.")
+		fmt.Fprintln(out, "重配置完成。")
 	} else {
-		fmt.Fprintln(out, "Installation completed.")
+		fmt.Fprintln(out, "安装完成。")
 	}
-	fmt.Fprintf(out, "Config: %s\n", result.ConfigPath)
-	fmt.Fprintf(out, "Bridge config: %s\n", result.BridgeConfigPath)
-	fmt.Fprintf(out, "State: %s\n", result.StatePath)
-	fmt.Fprintf(out, "Runtime: %s\n", result.RuntimeDir)
+	fmt.Fprintf(out, "配置文件：%s\n", result.ConfigPath)
+	fmt.Fprintf(out, "桥接配置：%s\n", result.BridgeConfigPath)
+	fmt.Fprintf(out, "状态文件：%s\n", result.StatePath)
+	fmt.Fprintf(out, "运行目录：%s\n", result.RuntimeDir)
 	if result.BackupFile != "" {
-		fmt.Fprintf(out, "Backup: %s\n", result.BackupFile)
+		fmt.Fprintf(out, "备份文件：%s\n", result.BackupFile)
 	}
 	if len(result.Warnings) > 0 {
-		fmt.Fprintln(out, "Warnings:")
+		fmt.Fprintln(out, "警告：")
 		for _, warning := range result.Warnings {
 			fmt.Fprintf(out, "  - %s\n", warning)
 		}
@@ -302,14 +308,14 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 
 func runBridge(args []string, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("bridge requires a subcommand; use `bridge serve`")
+		return errors.New("bridge 需要子命令，可使用 `bridge serve`")
 	}
 
 	switch args[0] {
 	case "serve":
 		return runBridgeServe(args[1:], out, errOut)
 	default:
-		return fmt.Errorf("unknown bridge subcommand %q", args[0])
+		return fmt.Errorf("未知的 bridge 子命令 %q", args[0])
 	}
 }
 
@@ -319,17 +325,19 @@ func runBridgeServe(args []string, out, errOut io.Writer) error {
 		return err
 	}
 
-	fs := flag.NewFlagSet("bridge serve", flag.ContinueOnError)
-	fs.SetOutput(errOut)
+	fs := newFlagSet("bridge serve", errOut, "启动单个 bridge 通道进程。")
 
-	channelFlag := fs.String("channel", "", "bridge-backed channel id: feishu, wecom")
-	configPathFlag := fs.String("config", info.BridgeConfigPath, "path to bridge config JSON")
+	channelFlag := fs.String("channel", "", "bridge 通道 ID：feishu、wecom")
+	configPathFlag := fs.String("config", info.BridgeConfigPath, "bridge 配置 JSON 路径")
 
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if strings.TrimSpace(*channelFlag) == "" {
-		return errors.New("--channel is required")
+		return errors.New("必须提供 --channel")
 	}
 
 	cfg, err := config.LoadBridgeConfig(*configPathFlag)
@@ -343,15 +351,12 @@ func runBridgeServe(args []string, out, errOut io.Writer) error {
 	return bridge.Serve(ctx, cfg, *channelFlag, out)
 }
 
-func chooseMode(prompter *ui.Prompter, info system.Info, yes bool, defaultMode install.Mode) (install.Mode, error) {
-	if info.OS == "windows" {
-		return install.ModeDocker, nil
-	}
+func chooseMode(prompter *ui.Prompter, _ system.Info, yes bool, defaultMode install.Mode) (install.Mode, error) {
 	if yes {
 		return defaultMode, nil
 	}
 
-	choice, err := prompter.AskChoice("Select install mode", []string{install.ModeDocker.String(), install.ModeNative.String()}, defaultMode.String())
+	choice, err := prompter.AskChoice("请选择安装模式", []string{install.ModeDocker.String(), install.ModeNative.String()}, defaultMode.String())
 	if err != nil {
 		return "", err
 	}
@@ -365,7 +370,7 @@ func chooseProviderPreset(prompter *ui.Prompter, bundle presets.Bundle, provider
 	if providerID != "" {
 		provider, ok := bundle.ProviderByID(providerID)
 		if !ok {
-			return presets.ProviderPreset{}, fmt.Errorf("unknown provider preset %q", providerID)
+			return presets.ProviderPreset{}, fmt.Errorf("未知的供应商预设 %q", providerID)
 		}
 		return provider, nil
 	}
@@ -380,7 +385,7 @@ func chooseProviderPreset(prompter *ui.Prompter, bundle presets.Bundle, provider
 		options = append(options, label)
 		labelToProvider[label] = provider
 	}
-	choice, err := prompter.AskChoice("Select a provider preset", options, options[0])
+	choice, err := prompter.AskChoice("请选择供应商预设", options, options[0])
 	if err != nil {
 		return presets.ProviderPreset{}, err
 	}
@@ -422,12 +427,12 @@ func buildProviderConfig(prompter *ui.Prompter, preset presets.ProviderPreset, e
 
 	if !options.yes {
 		fmt.Fprintln(out, "")
-		fmt.Fprintf(out, "Provider preset: %s\n", preset.Name)
+		fmt.Fprintf(out, "供应商预设：%s\n", preset.Name)
 		if preset.Notes != "" {
 			fmt.Fprintf(out, "  %s\n", preset.Notes)
 		}
 		var err error
-		baseURL, err = prompter.AskString("Base URL", baseURL, false)
+		baseURL, err = prompter.AskString("Base URL（接口地址）", baseURL, false)
 		if err != nil {
 			return config.ProviderConfig{}, err
 		}
@@ -435,11 +440,11 @@ func buildProviderConfig(prompter *ui.Prompter, preset presets.ProviderPreset, e
 		if err != nil {
 			return config.ProviderConfig{}, err
 		}
-		primaryModel, err = prompter.AskString("Primary model", primaryModel, false)
+		primaryModel, err = prompter.AskString("主模型", primaryModel, false)
 		if err != nil {
 			return config.ProviderConfig{}, err
 		}
-		fallbackCSV, err := prompter.AskString("Fallback models (comma-separated)", strings.Join(fallbackModels, ","), false)
+		fallbackCSV, err := prompter.AskString("候选模型（逗号分隔）", strings.Join(fallbackModels, ","), false)
 		if err != nil {
 			return config.ProviderConfig{}, err
 		}
@@ -470,7 +475,7 @@ func buildChannelSelections(prompter *ui.Prompter, bundle presets.Bundle, existi
 		default:
 			fmt.Fprintln(out, "")
 			var err error
-			enabled, err = prompter.AskYesNo("Enable "+preset.Name+"?", defaultEnabled)
+			enabled, err = prompter.AskYesNo("启用 "+preset.Name+" 吗？", defaultEnabled)
 			if err != nil {
 				return nil, err
 			}
@@ -486,11 +491,11 @@ func buildChannelSelections(prompter *ui.Prompter, bundle presets.Bundle, existi
 
 		if usesBridgeProvisioner(preset.Provisioner) && (!yes || useFlagSelection) {
 			var err error
-			listenAddr, err = prompter.AskString(preset.Name+" listen address", listenAddr, false)
+			listenAddr, err = prompter.AskString(preset.Name+" 监听地址", listenAddr, false)
 			if err != nil {
 				return nil, err
 			}
-			path, err = prompter.AskString(preset.Name+" callback path", path, false)
+			path, err = prompter.AskString(preset.Name+" 回调路径", path, false)
 			if err != nil {
 				return nil, err
 			}
@@ -510,7 +515,7 @@ func buildChannelSelections(prompter *ui.Prompter, bundle presets.Bundle, existi
 				return nil, err
 			}
 			if strings.TrimSpace(value) == "" && !field.Optional {
-				return nil, fmt.Errorf("%s requires %s", preset.Name, field.Label)
+				return nil, fmt.Errorf("%s 需要填写 %s", preset.Name, field.Label)
 			}
 			fields[field.Key] = value
 		}
@@ -525,11 +530,11 @@ func buildChannelSelections(prompter *ui.Prompter, bundle presets.Bundle, existi
 		}
 		if !yes {
 			var err error
-			dmPolicy, err = prompter.AskString(preset.Name+" DM policy", dmPolicy, false)
+			dmPolicy, err = prompter.AskString(preset.Name+" 私聊策略", dmPolicy, false)
 			if err != nil {
 				return nil, err
 			}
-			groupPolicy, err = prompter.AskString(preset.Name+" group policy", groupPolicy, false)
+			groupPolicy, err = prompter.AskString(preset.Name+" 群聊策略", groupPolicy, false)
 			if err != nil {
 				return nil, err
 			}
@@ -592,17 +597,42 @@ func channelIDs(channels []config.ChannelSelection) []string {
 func printHelp(out io.Writer) {
 	fmt.Fprintln(out, "openclaw-install")
 	fmt.Fprintln(out, "")
-	fmt.Fprintln(out, "Commands:")
-	fmt.Fprintln(out, "  install       Interactive installation workflow")
-	fmt.Fprintln(out, "  doctor        Inspect local environment and mirror reachability")
-	fmt.Fprintln(out, "  reconfigure   Rewrite provider/channel config without reinstalling")
-	fmt.Fprintln(out, "  bridge serve  Run a single bridge channel process")
-	fmt.Fprintln(out, "  version       Print installer version")
+	fmt.Fprintln(out, "命令：")
+	fmt.Fprintln(out, "  install       交互式安装流程")
+	fmt.Fprintln(out, "  doctor        检查本机环境与镜像可达性")
+	fmt.Fprintln(out, "  reconfigure   不重新安装，只重写 provider/channel 配置")
+	fmt.Fprintln(out, "  bridge serve  启动单个 bridge 通道进程")
+	fmt.Fprintln(out, "  version       输出安装器版本")
 	fmt.Fprintln(out, "")
-	fmt.Fprintln(out, "Examples:")
+	fmt.Fprintln(out, "示例：")
 	fmt.Fprintln(out, "  openclaw-install install")
 	fmt.Fprintln(out, "  openclaw-install doctor")
 	fmt.Fprintln(out, "  openclaw-install bridge serve --channel feishu")
+}
+
+func newFlagSet(name string, out io.Writer, summary string) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(out)
+	fs.Usage = func() {
+		fmt.Fprintf(out, "用法：openclaw-install %s [参数]\n", name)
+		if strings.TrimSpace(summary) != "" {
+			fmt.Fprintln(out, summary)
+		}
+		if flagSetHasOptions(fs) {
+			fmt.Fprintln(out, "")
+			fmt.Fprintln(out, "参数：")
+			fs.PrintDefaults()
+		}
+	}
+	return fs
+}
+
+func flagSetHasOptions(fs *flag.FlagSet) bool {
+	hasOptions := false
+	fs.VisitAll(func(*flag.Flag) {
+		hasOptions = true
+	})
+	return hasOptions
 }
 
 func recommendedMode(info system.Info) install.Mode {
@@ -682,4 +712,11 @@ func valueOrDefault(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func boolLabel(value bool) string {
+	if value {
+		return "已检测"
+	}
+	return "未检测"
 }

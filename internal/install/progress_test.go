@@ -47,12 +47,12 @@ func TestInstallReportsProgressSteps(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"[1/6] Preparing workspace",
-		"[2/6] Resolving mirrors",
-		"[3/6] Writing configuration files",
-		"[4/6] Generating runtime assets",
-		"[5/6] Saving installer state",
-		"[6/6] Configuring channels",
+		"[1/6] 准备工作目录",
+		"[2/6] 解析镜像源",
+		"[3/6] 写入配置文件",
+		"[4/6] 生成运行时文件",
+		"[5/6] 保存安装状态",
+		"[6/6] 配置通道",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("expected progress output to contain %q, got:\n%s", want, out.String())
@@ -66,7 +66,7 @@ func TestRunCommandReportsCurrentCommand(t *testing.T) {
 
 	var out bytes.Buffer
 	workflow.progress = newProgressTracker(&out, 1)
-	workflow.progress.Step("Installing dependencies")
+	workflow.progress.Step("安装依赖")
 
 	if err := workflow.runCommand(context.Background(), "npm", []string{"install", "-g", "openclaw"}, nil, "", &out, io.Discard); err != nil {
 		t.Fatalf("runCommand() error = %v", err)

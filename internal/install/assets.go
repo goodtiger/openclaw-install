@@ -36,7 +36,7 @@ func (w *Workflow) writeAssets(ctx context.Context, info system.Info, req Reques
 			return warnings, err
 		}
 	default:
-		return warnings, fmt.Errorf("unsupported mode %s", req.Mode)
+		return warnings, fmt.Errorf("不支持的安装模式 %s", req.Mode)
 	}
 
 	binaryPath, err := os.Executable()
@@ -48,7 +48,7 @@ func (w *Workflow) writeAssets(ctx context.Context, info system.Info, req Reques
 		if !usesBridgeProvisioner(channel.Provisioner) {
 			continue
 		}
-		w.progressDetailf("Preparing bridge assets for %s", channel.Name)
+		w.progressDetailf("为 %s 准备 bridge 运行文件", channel.Name)
 		scriptPath, err := writeBridgeScript(info, binaryPath, channel.ID)
 		if err != nil {
 			return warnings, err
@@ -124,7 +124,8 @@ func writeNativeAssets(info system.Info) error {
 		return err
 	}
 	if runtime.GOOS == "windows" {
-		return os.WriteFile(filepath.Join(info.RuntimeDir, "run-openclaw.cmd"), []byte("@echo off\r\nopenclaw gateway start\r\n"), 0o600)
+		script := "@echo off\r\nsetlocal\r\nset \"OPENCLAW_CMD=openclaw\"\r\nwhere openclaw >nul 2>nul\r\nif errorlevel 1 (\r\n  if exist \"%APPDATA%\\npm\\openclaw.cmd\" set \"OPENCLAW_CMD=%APPDATA%\\npm\\openclaw.cmd\"\r\n)\r\ncall \"%OPENCLAW_CMD%\" gateway start\r\n"
+		return os.WriteFile(filepath.Join(info.RuntimeDir, "run-openclaw.cmd"), []byte(script), 0o600)
 	}
 
 	script := "#!/usr/bin/env sh\nset -eu\nopenclaw gateway start\n"
@@ -163,9 +164,9 @@ func (w *Workflow) registerBridgeService(ctx context.Context, info system.Info, 
 	case "darwin":
 		return w.registerLaunchdService(ctx, info, channelID, scriptPath, stdout, stderr)
 	case "windows":
-		return []string{"Windows bridge scripts were generated, but service registration is manual in v1"}, nil
+		return []string{"Windows 已生成 bridge 启动脚本，但当前版本仍需手动注册服务"}, nil
 	default:
-		return []string{"unsupported host OS for automatic bridge service registration"}, nil
+		return []string{"当前宿主机系统暂不支持自动注册 bridge 服务"}, nil
 	}
 }
 
@@ -251,7 +252,7 @@ func (w *Workflow) cleanupLaunchdService(ctx context.Context, info system.Info, 
 func (w *Workflow) registerSystemdUserService(ctx context.Context, info system.Info, channelID, scriptPath string, stdout, stderr io.Writer) ([]string, error) {
 	warnings := []string{}
 	if !system.HasCommand("systemctl") {
-		return []string{"systemctl not found; bridge service file was generated but not activated"}, nil
+		return []string{"未找到 systemctl；bridge 服务文件已生成，但尚未激活"}, nil
 	}
 
 	serviceDir := filepath.Join(info.HomeDir, ".config", "systemd", "user")
@@ -281,11 +282,11 @@ WantedBy=default.target
 	}
 
 	if err := w.runCommand(ctx, "systemctl", []string{"--user", "daemon-reload"}, nil, "", stdout, stderr); err != nil {
-		warnings = append(warnings, "failed to reload systemd user daemon; bridge service file is still available")
+		warnings = append(warnings, "重新加载 systemd user daemon 失败，但 bridge 服务文件已经生成")
 		return warnings, nil
 	}
 	if err := w.runCommand(ctx, "systemctl", []string{"--user", "enable", "--now", serviceName}, nil, "", stdout, stderr); err != nil {
-		warnings = append(warnings, "failed to start systemd user service; start it manually with systemctl --user enable --now "+serviceName)
+		warnings = append(warnings, "启动 systemd 用户服务失败；可手动执行 systemctl --user enable --now "+serviceName)
 	}
 	return warnings, nil
 }
@@ -293,7 +294,7 @@ WantedBy=default.target
 func (w *Workflow) registerLaunchdService(ctx context.Context, info system.Info, channelID, scriptPath string, stdout, stderr io.Writer) ([]string, error) {
 	warnings := []string{}
 	if !system.HasCommand("launchctl") {
-		return []string{"launchctl not found; bridge plist was generated but not activated"}, nil
+		return []string{"未找到 launchctl；bridge plist 已生成，但尚未激活"}, nil
 	}
 
 	launchAgentDir := filepath.Join(info.HomeDir, "Library", "LaunchAgents")
@@ -335,7 +336,7 @@ func (w *Workflow) registerLaunchdService(ctx context.Context, info system.Info,
 
 	_ = w.runCommand(ctx, "launchctl", []string{"unload", plistPath}, nil, "", stdout, stderr)
 	if err := w.runCommand(ctx, "launchctl", []string{"load", plistPath}, nil, "", stdout, stderr); err != nil {
-		warnings = append(warnings, "failed to load launchd agent; run `launchctl load "+plistPath+"` manually")
+		warnings = append(warnings, "加载 launchd agent 失败；可手动执行 `launchctl load "+plistPath+"`")
 	}
 	return warnings, nil
 }

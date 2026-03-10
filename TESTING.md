@@ -27,7 +27,7 @@
 - 多 provider 自动切换
 - 三个 channel 同时启用
 - 企业微信复杂企业内部权限模型
-- Windows Docker 路径之外的能力
+- Windows native 的细节优化
 
 ## 2. 测试前准备
 
@@ -40,7 +40,7 @@
 3. macOS
 4. Windows
 
-原因很简单：当前实现里 Linux 路径最容易观察和排错。
+原因很简单：当前实现里 Linux 路径最容易观察和排错，Windows native 也更适合放到第二轮验证。
 
 ### 2.2 准备一个干净窗口
 
@@ -164,7 +164,7 @@ cp -a ~/.openclaw ~/.openclaw/manual-backups/pre-openclaw-install-$(date +%Y%m%d
 
 出现下面情况，建议先停下来：
 
-- Windows 且 Docker 未安装
+- Windows 同时没有 Docker，也没有 Node.js/npm
 - Linux/macOS 既没有 Docker，也没有 Node/npm，同时没有可用包管理器
 - `doctor` 输出异常，连最基本系统信息都不对
 

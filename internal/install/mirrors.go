@@ -36,7 +36,7 @@ func (w *Workflow) ResolveMirrors(ctx context.Context) (MirrorSelection, []strin
 
 func (w *Workflow) chooseMirror(ctx context.Context, category string, candidates []presets.MirrorCandidate) (presets.MirrorCandidate, error) {
 	if len(candidates) == 0 {
-		return presets.MirrorCandidate{}, fmt.Errorf("mirror category %s has no candidates", category)
+		return presets.MirrorCandidate{}, fmt.Errorf("镜像分类 %s 没有候选项", category)
 	}
 
 	for _, candidate := range candidates {
@@ -48,7 +48,7 @@ func (w *Workflow) chooseMirror(ctx context.Context, category string, candidates
 		}
 	}
 
-	return candidates[0], fmt.Errorf("mirror category %s fell back to %s after probe failures", category, candidates[0].Name)
+	return candidates[0], fmt.Errorf("镜像分类 %s 探测失败，已回退到 %s", category, candidates[0].Name)
 }
 
 func (w *Workflow) probeURL(ctx context.Context, rawURL string) error {
@@ -71,5 +71,5 @@ func (w *Workflow) probeURL(ctx context.Context, rawURL string) error {
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 		return nil
 	}
-	return fmt.Errorf("probe %s returned HTTP %d", rawURL, resp.StatusCode)
+	return fmt.Errorf("探测 %s 返回 HTTP %d", rawURL, resp.StatusCode)
 }

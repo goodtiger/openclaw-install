@@ -22,7 +22,7 @@ func NewPrompter(in io.Reader, out io.Writer) *Prompter {
 
 func (p *Prompter) AskChoice(label string, options []string, defaultValue string) (string, error) {
 	if len(options) == 0 {
-		return "", fmt.Errorf("no options for %s", label)
+		return "", fmt.Errorf("%s 没有可选项", label)
 	}
 
 	for {
@@ -51,7 +51,7 @@ func (p *Prompter) AskChoice(label string, options []string, defaultValue string
 				return option, nil
 			}
 		}
-		fmt.Fprintf(p.out, "Invalid choice: %s\n\n", text)
+		fmt.Fprintf(p.out, "无效输入：%s\n\n", text)
 	}
 }
 
@@ -73,9 +73,9 @@ func (p *Prompter) AskString(label, defaultValue string, _ bool) (string, error)
 }
 
 func (p *Prompter) AskYesNo(label string, defaultValue bool) (bool, error) {
-	defaultText := "y/N"
+	defaultText := "默认否"
 	if defaultValue {
-		defaultText = "Y/n"
+		defaultText = "默认是"
 	}
 
 	for {
@@ -89,12 +89,12 @@ func (p *Prompter) AskYesNo(label string, defaultValue bool) (bool, error) {
 		}
 
 		switch strings.ToLower(text) {
-		case "y", "yes":
+		case "y", "yes", "shi", "是":
 			return true, nil
-		case "n", "no":
+		case "n", "no", "fou", "否":
 			return false, nil
 		default:
-			fmt.Fprintf(p.out, "Please answer yes or no.\n")
+			fmt.Fprintf(p.out, "请输入 yes/no，也支持 y/n 或 是/否。\n")
 		}
 	}
 }
