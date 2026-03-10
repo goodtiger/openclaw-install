@@ -1,5 +1,5 @@
 dist/
-openclaw-install
-*.exe
+/openclaw-install
+/openclaw-install.exe
 *.log
 .DS_Store
