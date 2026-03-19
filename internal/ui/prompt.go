@@ -4,20 +4,37 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 type Prompter struct {
-	reader *bufio.Reader
-	out    io.Writer
+	reader     *bufio.Reader
+	out        io.Writer
+	readSecret func() (string, error)
 }
 
 func NewPrompter(in io.Reader, out io.Writer) *Prompter {
-	return &Prompter{
+	prompt := &Prompter{
 		reader: bufio.NewReader(in),
 		out:    out,
 	}
+	if file, ok := in.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+		prompt.readSecret = func() (string, error) {
+			value, err := term.ReadPassword(int(file.Fd()))
+			if out != nil {
+				fmt.Fprintln(out)
+			}
+			if err != nil {
+				return "", err
+			}
+			return strings.TrimSpace(string(value)), nil
+		}
+	}
+	return prompt
 }
 
 func (p *Prompter) AskChoice(label string, options []string, defaultValue string) (string, error) {
@@ -55,14 +72,25 @@ func (p *Prompter) AskChoice(label string, options []string, defaultValue string
 	}
 }
 
-func (p *Prompter) AskString(label, defaultValue string, _ bool) (string, error) {
-	if defaultValue != "" {
+func (p *Prompter) AskString(label, defaultValue string, secret bool) (string, error) {
+	switch {
+	case secret && defaultValue != "":
+		fmt.Fprintf(p.out, "%s [留空则沿用现有值]: ", label)
+	case defaultValue != "":
 		fmt.Fprintf(p.out, "%s [%s]: ", label, defaultValue)
-	} else {
+	default:
 		fmt.Fprintf(p.out, "%s: ", label)
 	}
 
-	text, err := p.readLine()
+	var (
+		text string
+		err  error
+	)
+	if secret && p.readSecret != nil {
+		text, err = p.readSecret()
+	} else {
+		text, err = p.readLine()
+	}
 	if err != nil {
 		return "", err
 	}

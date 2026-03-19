@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/goodtiger/openclaw-install/internal/config"
+	"github.com/goodtiger/openclaw-install/internal/shared"
 	"github.com/goodtiger/openclaw-install/internal/system"
 )
 
@@ -52,7 +53,7 @@ func (w *Workflow) syncChannels(ctx context.Context, info system.Info, req Reque
 			return warnings, err
 		}
 		provisionedPluginChannels = true
-		warnings = append(warnings, fmt.Sprintf("%s 已通过 OpenClaw 插件通道 %s 完成配置", channel.Name, valueOrDefault(channel.OpenClawChannel, channel.Driver)))
+		warnings = append(warnings, fmt.Sprintf("%s 已通过 OpenClaw 插件通道 %s 完成配置", channel.Name, shared.ValueOrDefault(channel.OpenClawChannel, channel.Driver)))
 	}
 
 	if provisionedPluginChannels {
@@ -75,7 +76,7 @@ func (w *Workflow) provisionPluginChannel(ctx context.Context, info system.Info,
 		return fmt.Errorf("为 %s 安装插件失败: %w", channel.Name, err)
 	}
 
-	channelName := valueOrDefault(channel.OpenClawChannel, channel.Driver)
+	channelName := shared.ValueOrDefault(channel.OpenClawChannel, channel.Driver)
 	args := []string{"channels", "add", "--channel", channelName}
 
 	token := pluginChannelToken(channel)
@@ -161,14 +162,7 @@ func (w *Workflow) restartOpenClaw(ctx context.Context, info system.Info, mode M
 }
 
 func usesBridgeProvisioner(provisioner string) bool {
-	return valueOrDefault(strings.TrimSpace(provisioner), "bridge") == "bridge"
-}
-
-func valueOrDefault(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return value
+	return shared.ValueOrDefault(strings.TrimSpace(provisioner), "bridge") == "bridge"
 }
 
 func (w *Workflow) shouldSkipPluginProvisioning(ctx context.Context, info system.Info, mode Mode) bool {

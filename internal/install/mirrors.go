@@ -3,10 +3,11 @@ package install
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
-	"sort"
 	"time"
 
+	"github.com/goodtiger/openclaw-install/internal/shared"
 	"github.com/goodtiger/openclaw-install/presets"
 )
 
@@ -16,13 +17,7 @@ func (w *Workflow) ResolveMirrors(ctx context.Context) (MirrorSelection, []strin
 	selection := make(MirrorSelection, len(w.Presets.Mirrors.Categories))
 	warnings := []string{}
 
-	keys := make([]string, 0, len(w.Presets.Mirrors.Categories))
-	for key := range w.Presets.Mirrors.Categories {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	for _, key := range keys {
+	for _, key := range shared.SortedStringKeys(w.Presets.Mirrors.Categories) {
 		candidates := w.Presets.Mirrors.Categories[key]
 		chosen, err := w.chooseMirror(ctx, key, candidates)
 		if err != nil {
@@ -67,6 +62,7 @@ func (w *Workflow) probeURL(ctx context.Context, rawURL string) error {
 		return err
 	}
 	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 		return nil

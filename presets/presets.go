@@ -85,23 +85,23 @@ type channelFile struct {
 	Channels []ChannelPreset `json:"channels"`
 }
 
-//go:embed *.yaml
+//go:embed *.json
 var files embed.FS
 
 func Load() (Bundle, error) {
 	var bundle Bundle
-	if err := loadJSONFile("mirrors.yaml", &bundle.Mirrors); err != nil {
+	if err := loadJSONFile("mirrors.json", &bundle.Mirrors); err != nil {
 		return Bundle{}, err
 	}
 
 	var providers providerFile
-	if err := loadJSONFile("providers.yaml", &providers); err != nil {
+	if err := loadJSONFile("providers.json", &providers); err != nil {
 		return Bundle{}, err
 	}
 	bundle.Providers = providers.Providers
 
 	var channels channelFile
-	if err := loadJSONFile("channels.yaml", &channels); err != nil {
+	if err := loadJSONFile("channels.json", &channels); err != nil {
 		return Bundle{}, err
 	}
 	bundle.Channels = channels.Channels

@@ -6,15 +6,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goodtiger/openclaw-install/internal/config"
+	"github.com/goodtiger/openclaw-install/internal/shared"
 	"github.com/goodtiger/openclaw-install/internal/system"
 	"github.com/goodtiger/openclaw-install/presets"
 )
@@ -63,6 +66,7 @@ type Workflow struct {
 	Executor   Executor
 	HTTPClient *http.Client
 	Now        func() time.Time
+	progressMu sync.RWMutex
 	progress   *progressTracker
 }
 
@@ -88,29 +92,39 @@ func (RealExecutor) Run(ctx context.Context, cmd string, args []string, env map[
 }
 
 func (w *Workflow) beginProgress(out io.Writer, req Request) func() {
+	w.progressMu.Lock()
 	w.progress = newProgressTracker(out, installStepCount(req))
+	w.progressMu.Unlock()
 	return func() {
+		w.progressMu.Lock()
 		w.progress = nil
+		w.progressMu.Unlock()
 	}
 }
 
 func (w *Workflow) progressStep(title string) {
-	if w.progress != nil {
-		w.progress.Step(title)
+	if progress := w.currentProgress(); progress != nil {
+		progress.Step(title)
 	}
 }
 
 func (w *Workflow) progressDetailf(format string, args ...any) {
-	if w.progress != nil {
-		w.progress.Detailf(format, args...)
+	if progress := w.currentProgress(); progress != nil {
+		progress.Detailf(format, args...)
 	}
 }
 
 func (w *Workflow) runCommand(ctx context.Context, cmd string, args []string, env map[string]string, dir string, stdout, stderr io.Writer) error {
-	if w.progress != nil {
-		w.progress.Command(cmd, args)
+	if progress := w.currentProgress(); progress != nil {
+		progress.Command(cmd, args)
 	}
 	return w.Executor.Run(ctx, cmd, args, env, dir, stdout, stderr)
+}
+
+func (w *Workflow) currentProgress() *progressTracker {
+	w.progressMu.RLock()
+	defer w.progressMu.RUnlock()
+	return w.progress
 }
 
 func (w *Workflow) Doctor(ctx context.Context, info system.Info) (DoctorReport, error) {
@@ -133,13 +147,15 @@ func (w *Workflow) Doctor(ctx context.Context, info system.Info) (DoctorReport, 
 }
 
 func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, stdout, stderr io.Writer) (Result, error) {
-	if err := req.Validate(info); err != nil {
+	normalizedReq, err := req.NormalizeAndValidate(info)
+	if err != nil {
 		return Result{}, err
 	}
+	req = normalizedReq
 	resetProgress := w.beginProgress(stdout, req)
 	defer resetProgress()
 
-	w.progressStep("准备工作目录")
+	w.progressStep(progressStepPrepareWorkspace)
 	if err := config.EnsureDir(info.OpenClawHome); err != nil {
 		return Result{}, err
 	}
@@ -160,14 +176,14 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 		w.progressDetailf("已备份现有配置到 %s", backupFile)
 	}
 
-	w.progressStep("解析镜像源")
+	w.progressStep(progressStepResolveMirrors)
 	mirrors, mirrorWarnings := w.ResolveMirrors(ctx)
 	result.MirrorNames = mirrorNames(mirrors)
 	result.Warnings = append(result.Warnings, mirrorWarnings...)
 	if len(result.MirrorNames) == 0 {
 		w.progressDetailf("未定义镜像分类，使用内置默认值")
 	} else {
-		for _, key := range sortedStringMapKeys(result.MirrorNames) {
+		for _, key := range shared.SortedStringKeys(result.MirrorNames) {
 			w.progressDetailf("%s：%s", key, result.MirrorNames[key])
 		}
 	}
@@ -184,17 +200,17 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 	result.Warnings = append(result.Warnings, assetWarnings...)
 
 	if !req.SkipInstall {
-		w.progressStep("安装依赖")
+		w.progressStep(progressStepInstallDeps)
 		if err := w.installDependencies(ctx, info, req.Mode, stdout, stderr); err != nil {
 			return result, err
 		}
-		w.progressStep("安装 OpenClaw 运行时")
+		w.progressStep(progressStepInstallRuntime)
 		if err := w.installOpenClaw(ctx, info, req.Mode, mirrors, stdout, stderr); err != nil {
 			return result, err
 		}
 	}
 
-	w.progressStep("配置通道")
+	w.progressStep(progressStepConfigureChannel)
 	if len(req.Channels) == 0 {
 		w.progressDetailf("未启用任何通道")
 	}
@@ -205,7 +221,7 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 	}
 
 	if !req.SkipVerify {
-		w.progressStep("验证安装结果")
+		w.progressStep(progressStepVerify)
 		verifyWarnings, err := w.verify(ctx, info, req, stdout, stderr)
 		result.Warnings = append(result.Warnings, verifyWarnings...)
 		if err != nil {
@@ -236,7 +252,7 @@ func (w *Workflow) applyConfigAndAssets(ctx context.Context, info system.Info, r
 	managedConfig := config.BuildManagedConfig(input)
 	finalConfig := config.ApplyManagedConfig(existingConfig, managedConfig, previousState)
 
-	w.progressStep("写入配置文件")
+	w.progressStep(progressStepWriteConfig)
 	if err := config.SaveJSONAtomic(info.ConfigPath, finalConfig); err != nil {
 		return nil, err
 	}
@@ -247,7 +263,7 @@ func (w *Workflow) applyConfigAndAssets(ctx context.Context, info system.Info, r
 	}
 	w.progressDetailf("Bridge 配置 -> %s", info.BridgeConfigPath)
 
-	w.progressStep("生成运行时文件")
+	w.progressStep(progressStepGenerateAssets)
 	assetWarnings, err := w.writeAssets(ctx, info, req, previousState, mirrors, stdout, stderr)
 	if err != nil {
 		return nil, err
@@ -268,7 +284,7 @@ func (w *Workflow) applyConfigAndAssets(ctx context.Context, info system.Info, r
 		BridgeConfigPath:  info.BridgeConfigPath,
 	}
 
-	w.progressStep("保存安装状态")
+	w.progressStep(progressStepSaveState)
 	if err := config.SaveInstallState(info.StatePath, state); err != nil {
 		return nil, err
 	}
@@ -283,29 +299,35 @@ func (w *Workflow) Reconfigure(ctx context.Context, info system.Info, req Reques
 	return w.Install(ctx, info, reconfigReq, stdout, stderr)
 }
 
-func (r *Request) Validate(info system.Info) error {
-	if r.Mode == "" {
-		r.Mode = recommendedMode(info)
+func (r Request) NormalizeAndValidate(info system.Info) (Request, error) {
+	normalized := r
+	if normalized.Mode == "" {
+		normalized.Mode = recommendedMode(info)
 	}
-	if r.AppVersion == "" {
-		return errors.New("缺少安装器版本号")
+	if normalized.AppVersion == "" {
+		return Request{}, errors.New("缺少安装器版本号")
 	}
-	if strings.TrimSpace(r.Provider.ID) == "" {
-		return errors.New("缺少供应商 ID")
+	if strings.TrimSpace(normalized.Provider.ID) == "" {
+		return Request{}, errors.New("缺少供应商 ID")
 	}
-	if strings.TrimSpace(r.Provider.Name) == "" {
-		return errors.New("缺少供应商名称")
+	if strings.TrimSpace(normalized.Provider.Name) == "" {
+		return Request{}, errors.New("缺少供应商名称")
 	}
-	if strings.TrimSpace(r.Provider.Type) == "" {
-		r.Provider.Type = "openai-compatible"
+	if strings.TrimSpace(normalized.Provider.Type) == "" {
+		normalized.Provider.Type = "openai-compatible"
 	}
-	if strings.TrimSpace(r.Provider.BaseURL) == "" {
-		return errors.New("缺少供应商 Base URL")
+	if strings.TrimSpace(normalized.Provider.BaseURL) == "" {
+		return Request{}, errors.New("缺少供应商 Base URL")
 	}
-	if strings.TrimSpace(r.Provider.PrimaryModel) == "" {
-		return errors.New("缺少主模型")
+	if strings.TrimSpace(normalized.Provider.PrimaryModel) == "" {
+		return Request{}, errors.New("缺少主模型")
 	}
-	return nil
+	return normalized, nil
+}
+
+func (r Request) Validate(info system.Info) error {
+	_, err := r.NormalizeAndValidate(info)
+	return err
 }
 
 func (w *Workflow) installDependencies(ctx context.Context, info system.Info, mode Mode, stdout, stderr io.Writer) error {
@@ -485,6 +507,13 @@ func (w *Workflow) installNativeMode(ctx context.Context, info system.Info, mirr
 			if registryURL == "" {
 				continue
 			}
+			if err := validateHTTPSURL(registryURL); err != nil {
+				installErr = fmt.Errorf("npm 源 %s 无效: %w", mirrorCandidateLabel(candidate), err)
+				if idx < len(candidates)-1 {
+					w.progressDetailf("跳过无效 npm 源 %s", mirrorCandidateLabel(candidate))
+				}
+				continue
+			}
 
 			w.progressDetailf("尝试 npm 源 %s (%s)", mirrorCandidateLabel(candidate), registryURL)
 			env := map[string]string{
@@ -573,15 +602,24 @@ func recommendedMode(info system.Info) Mode { return RecommendedMode(info) }
 
 func mirrorNames(selection MirrorSelection) map[string]string {
 	names := make(map[string]string, len(selection))
-	keys := make([]string, 0, len(selection))
-	for key := range selection {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
+	for _, key := range shared.SortedStringKeys(selection) {
 		names[key] = selection[key].Name
 	}
 	return names
+}
+
+func validateHTTPSURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("URL scheme 必须为 https: %s", rawURL)
+	}
+	if strings.TrimSpace(parsed.Host) == "" {
+		return fmt.Errorf("URL host 不能为空: %s", rawURL)
+	}
+	return nil
 }
 
 func gatewayBindForMode(mode Mode) string {

@@ -92,6 +92,32 @@ func TestCleanupObsoleteChannelAssetsRemovesExistingBridgeArtifacts(t *testing.T
 	}
 }
 
+func TestWriteBridgeScriptQuotesChannelArgument(t *testing.T) {
+	info := system.Info{RuntimeDir: t.TempDir(), BridgeConfigPath: "/tmp/bridge config.json"}
+
+	scriptPath, err := writeBridgeScript(info, "/tmp/openclaw install", "feishu")
+	if err != nil {
+		t.Fatalf("writeBridgeScript() error = %v", err)
+	}
+
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("ReadFile scriptPath: %v", err)
+	}
+
+	if !strings.Contains(string(content), `--channel "feishu"`) {
+		t.Fatalf("expected quoted channel argument, got:\n%s", content)
+	}
+}
+
+func TestWriteBridgeScriptRejectsInvalidChannelID(t *testing.T) {
+	info := system.Info{RuntimeDir: t.TempDir(), BridgeConfigPath: "/tmp/bridge.json"}
+
+	if _, err := writeBridgeScript(info, "/tmp/openclaw", "../bad;rm -rf"); err == nil {
+		t.Fatal("expected invalid channel ID to be rejected")
+	}
+}
+
 func joinArgs(args []string) string {
 	return strings.Join(args, " ")
 }

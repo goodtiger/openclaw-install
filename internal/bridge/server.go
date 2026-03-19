@@ -3,27 +3,44 @@ package bridge
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/goodtiger/openclaw-install/internal/config"
+	"github.com/goodtiger/openclaw-install/internal/shared"
+	"golang.org/x/time/rate"
 )
 
 const (
-	maxRequestBodySize = 1 << 20        // 1 MB
-	eventDedupeWindow  = 5 * time.Minute
+	maxRequestBodySize   = 1 << 20 // 1 MB
+	eventDedupeWindow    = 5 * time.Minute
+	eventCleanupInterval = time.Minute
+	maxWeComEchoStrBytes = 64
+	requestRateInterval  = 200 * time.Millisecond
+	requestRateBurst     = 20
 )
 
 type Completer interface {
 	Complete(ctx context.Context, prompt string) (string, error)
 }
+
+var (
+	weComEchoPattern           = regexp.MustCompile(`^[A-Za-z0-9]{1,64}$`)
+	errWeComTokenNotConfigured = errors.New("未配置企业微信 Callback Token")
+)
 
 type Server struct {
 	cfg          config.BridgeConfig
@@ -31,6 +48,7 @@ type Server struct {
 	client       *http.Client
 	logger       *log.Logger
 	seenEventIDs sync.Map // string → time.Time，用于飞书消息去重
+	limiter      *rate.Limiter
 }
 
 type OpenAICompatibleClient struct {
@@ -62,6 +80,7 @@ func NewServer(cfg config.BridgeConfig, completer Completer, httpClient *http.Cl
 		completer: completer,
 		client:    httpClient,
 		logger:    log.New(logOutput, "[bridge] ", log.LstdFlags),
+		limiter:   rate.NewLimiter(rate.Every(requestRateInterval), requestRateBurst),
 	}
 }
 
@@ -82,6 +101,33 @@ func (s *Server) isSeenEvent(eventID string) bool {
 	return false
 }
 
+func (s *Server) cleanupSeenEventIDs(now time.Time) {
+	expireBefore := now.Add(-eventDedupeWindow)
+	s.seenEventIDs.Range(func(key, value any) bool {
+		seenAt, ok := value.(time.Time)
+		if !ok || seenAt.Before(expireBefore) {
+			s.seenEventIDs.Delete(key)
+		}
+		return true
+	})
+}
+
+func (s *Server) runSeenEventCleanup(stop <-chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	ticker := time.NewTicker(eventCleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			s.cleanupSeenEventIDs(time.Now())
+		case <-stop:
+			return
+		}
+	}
+}
+
 func Serve(ctx context.Context, cfg config.BridgeConfig, channel string, logOutput io.Writer) error {
 	server := NewServer(cfg, nil, nil, logOutput)
 	channelCfg, ok := cfg.Channels[channel]
@@ -99,27 +145,31 @@ func Serve(ctx context.Context, cfg config.BridgeConfig, channel string, logOutp
 		Handler: handler,
 	}
 
-	errCh := make(chan error, 1)
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go server.runSeenEventCleanup(stop, &wg)
 	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			server.logger.Printf("关闭服务器时出错：%v", err)
+		defer wg.Done()
+		select {
+		case <-ctx.Done():
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := httpServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				server.logger.Printf("关闭服务器时出错：%v", err)
+			}
+		case <-stop:
 		}
 	}()
 
-	go func() {
-		server.logger.Printf("starting channel=%s addr=%s path=%s", channel, channelCfg.ListenAddr, channelCfg.Path)
-		err := httpServer.ListenAndServe()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-			return
-		}
-		errCh <- nil
-	}()
-
-	return <-errCh
+	server.logger.Printf("starting channel=%s addr=%s path=%s", channel, channelCfg.ListenAddr, channelCfg.Path)
+	err = httpServer.ListenAndServe()
+	close(stop)
+	wg.Wait()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }
 
 // channelHandlerFactory 根据渠道配置生成对应的 HTTP 处理函数。
@@ -154,9 +204,19 @@ func (s *Server) Handler(channel string) (http.Handler, error) {
 			"channel": channel,
 		})
 	})
-	mux.HandleFunc(channelCfg.Path, factory(channelCfg))
+	mux.Handle(channelCfg.Path, s.withRateLimit(factory(channelCfg)))
 
 	return mux, nil
+}
+
+func (s *Server) withRateLimit(next http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.limiter != nil && !s.limiter.Allow() {
+			http.Error(w, "请求过于频繁", http.StatusTooManyRequests)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) handleQQ(channelCfg config.BridgeChannelConfig) http.HandlerFunc {
@@ -250,7 +310,7 @@ func (s *Server) handleFeishu(channelCfg config.BridgeChannelConfig) http.Handle
 			return
 		}
 
-		if token := channelCfg.Fields["verification_token"]; token != "" && payload.Token != "" && payload.Token != token {
+		if token := channelCfg.Fields["verification_token"]; token != "" && payload.Token != token {
 			http.Error(w, "验证 token 无效", http.StatusForbidden)
 			return
 		}
@@ -280,8 +340,15 @@ func (s *Server) handleWeCom(channelCfg config.BridgeChannelConfig) http.Handler
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			if echostr := r.URL.Query().Get("echostr"); echostr != "" {
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(echostr))
+				if err := validateWeComEchoStr(echostr); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				if err := validateWeComRequestSignature(channelCfg, r, nil); err != nil {
+					writeWeComAuthError(w, err)
+					return
+				}
+				writePlainText(w, http.StatusOK, echostr)
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -297,6 +364,10 @@ func (s *Server) handleWeCom(channelCfg config.BridgeChannelConfig) http.Handler
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "读取请求体失败", http.StatusBadRequest)
+			return
+		}
+		if err := validateWeComRequestSignature(channelCfg, r, body); err != nil {
+			writeWeComAuthError(w, err)
 			return
 		}
 
@@ -454,7 +525,7 @@ func (c OpenAICompatibleClient) Complete(ctx context.Context, prompt string) (st
 		"messages": []map[string]string{
 			{
 				"role":    "system",
-				"content": valueOrDefault(c.systemPrompt, "You are a concise assistant."),
+				"content": shared.ValueOrDefault(c.systemPrompt, "You are a concise assistant."),
 			},
 			{
 				"role":    "user",
@@ -530,6 +601,19 @@ func parseWeComText(raw []byte) string {
 			}
 		}
 	}
+
+	var xmlPayload struct {
+		Text    string `xml:"Text"`
+		Content string `xml:"Content"`
+		Message string `xml:"Message"`
+	}
+	if err := xml.Unmarshal(raw, &xmlPayload); err == nil {
+		for _, value := range []string{xmlPayload.Text, xmlPayload.Content, xmlPayload.Message} {
+			if strings.TrimSpace(value) != "" {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
 	return strings.TrimSpace(string(raw))
 }
 
@@ -543,14 +627,104 @@ func bearerHeader(token string) map[string]string {
 }
 
 func writeJSON(w http.ResponseWriter, statusCode int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
+	data, err := json.Marshal(payload)
+	if err != nil {
+		http.Error(w, "JSON 编码失败", http.StatusInternalServerError)
+		return
+	}
+	data = append(data, '\n')
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(payload)
+	if _, err := w.Write(data); err != nil {
+		log.Printf("writeJSON: %v", err)
+	}
 }
 
-func valueOrDefault(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
+func writePlainText(w http.ResponseWriter, statusCode int, payload string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(statusCode)
+	if _, err := io.WriteString(w, payload); err != nil {
+		log.Printf("writePlainText: %v", err)
 	}
-	return value
+}
+
+func validateWeComEchoStr(echostr string) error {
+	if len(echostr) > maxWeComEchoStrBytes {
+		return fmt.Errorf("echostr 过长")
+	}
+	if !weComEchoPattern.MatchString(echostr) {
+		return fmt.Errorf("echostr 只能包含字母和数字")
+	}
+	return nil
+}
+
+func validateWeComRequestSignature(channelCfg config.BridgeChannelConfig, r *http.Request, body []byte) error {
+	token := strings.TrimSpace(channelCfg.Fields["token"])
+	if token == "" {
+		return errWeComTokenNotConfigured
+	}
+
+	signature := strings.TrimSpace(r.URL.Query().Get("msg_signature"))
+	timestamp := strings.TrimSpace(r.URL.Query().Get("timestamp"))
+	nonce := strings.TrimSpace(r.URL.Query().Get("nonce"))
+	if signature == "" || timestamp == "" || nonce == "" {
+		return errors.New("缺少企业微信签名参数")
+	}
+
+	expected := calculateWeComSignature(token, timestamp, nonce, weComSignaturePayload(r, body))
+	if subtle.ConstantTimeCompare([]byte(signature), []byte(expected)) != 1 {
+		return errors.New("企业微信签名校验失败")
+	}
+	return nil
+}
+
+func calculateWeComSignature(token, timestamp, nonce, payload string) string {
+	parts := []string{token, timestamp, nonce, payload}
+	slices.Sort(parts)
+	sum := sha1.Sum([]byte(strings.Join(parts, "")))
+	return hex.EncodeToString(sum[:])
+}
+
+func weComSignaturePayload(r *http.Request, body []byte) string {
+	if r.Method == http.MethodGet {
+		return r.URL.Query().Get("echostr")
+	}
+	if len(body) == 0 {
+		return ""
+	}
+	if encrypt := extractWeComEncrypt(body); encrypt != "" {
+		return encrypt
+	}
+	return string(body)
+}
+
+func extractWeComEncrypt(body []byte) string {
+	var jsonPayload struct {
+		EncryptLower string `json:"encrypt"`
+		EncryptUpper string `json:"Encrypt"`
+	}
+	if err := json.Unmarshal(body, &jsonPayload); err == nil {
+		for _, value := range []string{jsonPayload.EncryptLower, jsonPayload.EncryptUpper} {
+			if strings.TrimSpace(value) != "" {
+				return strings.TrimSpace(value)
+			}
+		}
+	}
+
+	var xmlPayload struct {
+		Encrypt string `xml:"Encrypt"`
+	}
+	if err := xml.Unmarshal(body, &xmlPayload); err == nil && strings.TrimSpace(xmlPayload.Encrypt) != "" {
+		return strings.TrimSpace(xmlPayload.Encrypt)
+	}
+	return ""
+}
+
+func writeWeComAuthError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errWeComTokenNotConfigured) {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	http.Error(w, err.Error(), http.StatusForbidden)
 }

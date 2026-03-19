@@ -7,13 +7,17 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/goodtiger/openclaw-install/internal/config"
 	"github.com/goodtiger/openclaw-install/internal/system"
 )
+
+var channelIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 func (w *Workflow) writeAssets(ctx context.Context, info system.Info, req Request, previous config.InstallState, mirrors MirrorSelection, stdout, stderr io.Writer) ([]string, error) {
 	warnings := []string{}
@@ -47,6 +51,9 @@ func (w *Workflow) writeAssets(ctx context.Context, info system.Info, req Reques
 	for _, channel := range req.Channels {
 		if !usesBridgeProvisioner(channel.Provisioner) {
 			continue
+		}
+		if err := validateChannelID(channel.ID); err != nil {
+			return warnings, err
 		}
 		w.progressDetailf("为 %s 准备 bridge 运行文件", channel.Name)
 		scriptPath, err := writeBridgeScript(info, binaryPath, channel.ID)
@@ -137,17 +144,20 @@ func writeNativeAssets(info system.Info) error {
 }
 
 func writeBridgeScript(info system.Info, binaryPath, channelID string) (string, error) {
+	if err := validateChannelID(channelID); err != nil {
+		return "", err
+	}
 	name := "bridge-" + channelID + scriptExtension()
 	path := filepath.Join(info.RuntimeDir, name)
 	if runtime.GOOS == "windows" {
-		content := fmt.Sprintf("@echo off\r\n\"%s\" bridge serve --channel %s --config \"%s\"\r\n", binaryPath, channelID, info.BridgeConfigPath)
+		content := fmt.Sprintf("@echo off\r\n\"%s\" bridge serve --channel \"%s\" --config \"%s\"\r\n", binaryPath, channelID, info.BridgeConfigPath)
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			return "", err
 		}
 		return path, nil
 	}
 
-	content := fmt.Sprintf("#!/usr/bin/env sh\nset -eu\nexec \"%s\" bridge serve --channel %s --config \"%s\"\n", binaryPath, channelID, info.BridgeConfigPath)
+	content := fmt.Sprintf("#!/usr/bin/env sh\nset -eu\nexec \"%s\" bridge serve --channel \"%s\" --config \"%s\"\n", binaryPath, channelID, info.BridgeConfigPath)
 	if err := os.WriteFile(path, []byte(content), 0o700); err != nil {
 		return "", err
 	}
@@ -174,10 +184,16 @@ func (w *Workflow) cleanupObsoleteChannelAssets(ctx context.Context, info system
 	currentBridgeIDs := []string{}
 	for _, channel := range current {
 		if usesBridgeProvisioner(channel.Provisioner) {
+			if err := validateChannelID(channel.ID); err != nil {
+				return err
+			}
 			currentBridgeIDs = append(currentBridgeIDs, channel.ID)
 		}
 	}
 	for _, channelID := range previous.ManagedChannels {
+		if err := validateChannelID(channelID); err != nil {
+			return err
+		}
 		if slices.Contains(currentBridgeIDs, channelID) {
 			continue
 		}
@@ -203,6 +219,9 @@ func (w *Workflow) cleanupObsoleteChannelAssets(ctx context.Context, info system
 }
 
 func (w *Workflow) cleanupSystemdUserService(ctx context.Context, info system.Info, channelID string, stdout, stderr io.Writer) error {
+	if err := validateChannelID(channelID); err != nil {
+		return err
+	}
 	serviceName := "openclaw-bridge-" + channelID + ".service"
 	servicePath := filepath.Join(info.HomeDir, ".config", "systemd", "user", serviceName)
 
@@ -229,6 +248,9 @@ func (w *Workflow) cleanupSystemdUserService(ctx context.Context, info system.In
 }
 
 func (w *Workflow) cleanupLaunchdService(ctx context.Context, info system.Info, channelID string, stdout, stderr io.Writer) error {
+	if err := validateChannelID(channelID); err != nil {
+		return err
+	}
 	plistPath := filepath.Join(info.HomeDir, "Library", "LaunchAgents", "ai.openclaw.bridge."+channelID+".plist")
 
 	if _, err := os.Stat(plistPath); err != nil {
@@ -251,6 +273,9 @@ func (w *Workflow) cleanupLaunchdService(ctx context.Context, info system.Info, 
 
 func (w *Workflow) registerSystemdUserService(ctx context.Context, info system.Info, channelID, scriptPath string, stdout, stderr io.Writer) ([]string, error) {
 	warnings := []string{}
+	if err := validateChannelID(channelID); err != nil {
+		return warnings, err
+	}
 	if !system.HasCommand("systemctl") {
 		return []string{"未找到 systemctl；bridge 服务文件已生成，但尚未激活"}, nil
 	}
@@ -271,11 +296,11 @@ ExecStart=%s
 WorkingDirectory=%s
 Restart=always
 RestartSec=3
-Environment=HOME=%s
+Environment=%s
 
 [Install]
 WantedBy=default.target
-`, channelID, scriptPath, info.RuntimeDir, info.HomeDir)
+`, channelID, systemdQuote(scriptPath), systemdQuote(info.RuntimeDir), systemdQuote("HOME="+info.HomeDir))
 
 	if err := os.WriteFile(servicePath, []byte(content), 0o600); err != nil {
 		return warnings, err
@@ -293,6 +318,9 @@ WantedBy=default.target
 
 func (w *Workflow) registerLaunchdService(ctx context.Context, info system.Info, channelID, scriptPath string, stdout, stderr io.Writer) ([]string, error) {
 	warnings := []string{}
+	if err := validateChannelID(channelID); err != nil {
+		return warnings, err
+	}
 	if !system.HasCommand("launchctl") {
 		return []string{"未找到 launchctl；bridge plist 已生成，但尚未激活"}, nil
 	}
@@ -339,4 +367,15 @@ func (w *Workflow) registerLaunchdService(ctx context.Context, info system.Info,
 		warnings = append(warnings, "加载 launchd agent 失败；可手动执行 `launchctl load "+plistPath+"`")
 	}
 	return warnings, nil
+}
+
+func validateChannelID(channelID string) error {
+	if !channelIDPattern.MatchString(channelID) {
+		return fmt.Errorf("无效的 channel ID %q：仅允许字母、数字、下划线和连字符", channelID)
+	}
+	return nil
+}
+
+func systemdQuote(value string) string {
+	return strconv.Quote(value)
 }

@@ -8,8 +8,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goodtiger/openclaw-install/internal/config"
+	"golang.org/x/time/rate"
 )
 
 type stubCompleter struct {
@@ -166,7 +168,41 @@ func TestFeishuChallenge(t *testing.T) {
 	}
 }
 
+func TestFeishuRequiresConfiguredVerificationToken(t *testing.T) {
+	cfg := config.BridgeConfig{
+		Version: 1,
+		Channels: map[string]config.BridgeChannelConfig{
+			"feishu": {
+				Enabled: true,
+				Driver:  "feishu",
+				Path:    "/feishu/events",
+				Fields: map[string]string{
+					"verification_token": "expected-token",
+				},
+			},
+		},
+	}
+
+	server := NewServer(cfg, stubCompleter{reply: "ignored"}, nil, io.Discard)
+	handler, err := server.Handler("feishu")
+	if err != nil {
+		t.Fatalf("Handler() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/feishu/events", strings.NewReader(`{"header":{"event_id":"evt-001"},"event":{"message":{"content":"{\"text\":\"hi\"}"}}}`))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
 func TestWeComEchoStr(t *testing.T) {
+	token := "wecom-token"
+	echostr := "Hello123"
+	signature := calculateWeComSignature(token, "1700000000", "nonce-1", echostr)
+
 	cfg := config.BridgeConfig{
 		Version: 1,
 		Channels: map[string]config.BridgeChannelConfig{
@@ -175,6 +211,9 @@ func TestWeComEchoStr(t *testing.T) {
 				Driver:     "wecom",
 				ListenAddr: "127.0.0.1:19092",
 				Path:       "/wecom/events",
+				Fields: map[string]string{
+					"token": token,
+				},
 			},
 		},
 	}
@@ -185,14 +224,102 @@ func TestWeComEchoStr(t *testing.T) {
 		t.Fatalf("Handler() error = %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/wecom/events?echostr=hello", nil)
+	req := httptest.NewRequest(http.MethodGet, "/wecom/events?echostr="+echostr+"&timestamp=1700000000&nonce=nonce-1&msg_signature="+signature, nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
-	if strings.TrimSpace(rec.Body.String()) != "hello" {
-		t.Fatalf("body = %q, want %q", rec.Body.String(), "hello")
+	if strings.TrimSpace(rec.Body.String()) != echostr {
+		t.Fatalf("body = %q, want %q", rec.Body.String(), echostr)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Fatalf("content-type = %q, want %q", got, "text/plain; charset=utf-8")
+	}
+}
+
+func TestWeComEchoStrRejectsInvalidInput(t *testing.T) {
+	token := "wecom-token"
+	echostr := "hello<script>"
+	signature := calculateWeComSignature(token, "1700000000", "nonce-1", echostr)
+
+	cfg := config.BridgeConfig{
+		Version: 1,
+		Channels: map[string]config.BridgeChannelConfig{
+			"wecom": {
+				Enabled: true,
+				Driver:  "wecom",
+				Path:    "/wecom/events",
+				Fields: map[string]string{
+					"token": token,
+				},
+			},
+		},
+	}
+
+	server := NewServer(cfg, stubCompleter{reply: "ignored"}, nil, io.Discard)
+	handler, err := server.Handler("wecom")
+	if err != nil {
+		t.Fatalf("Handler() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/wecom/events?echostr="+echostr+"&timestamp=1700000000&nonce=nonce-1&msg_signature="+signature, nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestCleanupSeenEventIDsRemovesExpiredEntries(t *testing.T) {
+	server := NewServer(config.BridgeConfig{}, stubCompleter{reply: "ok"}, nil, io.Discard)
+	server.seenEventIDs.Store("fresh", time.Now())
+	server.seenEventIDs.Store("expired", time.Now().Add(-eventDedupeWindow-time.Second))
+
+	server.cleanupSeenEventIDs(time.Now())
+
+	if _, ok := server.seenEventIDs.Load("expired"); ok {
+		t.Fatal("expected expired event ID to be removed")
+	}
+	if _, ok := server.seenEventIDs.Load("fresh"); !ok {
+		t.Fatal("expected fresh event ID to remain")
+	}
+}
+
+func TestHandlerRateLimitReturnsTooManyRequests(t *testing.T) {
+	cfg := config.BridgeConfig{
+		Version: 1,
+		Channels: map[string]config.BridgeChannelConfig{
+			"qq": {
+				Enabled: true,
+				Driver:  "onebot",
+				Path:    "/qq/events",
+			},
+		},
+	}
+
+	server := NewServer(cfg, stubCompleter{reply: "pong"}, nil, io.Discard)
+	server.limiter = rate.NewLimiter(rate.Every(time.Hour), 1)
+
+	handler, err := server.Handler("qq")
+	if err != nil {
+		t.Fatalf("Handler() error = %v", err)
+	}
+
+	body := `{"post_type":"message","message_type":"private","user_id":1,"raw_message":"ping"}`
+	firstReq := httptest.NewRequest(http.MethodPost, "/qq/events", strings.NewReader(body))
+	firstRec := httptest.NewRecorder()
+	handler.ServeHTTP(firstRec, firstReq)
+	if firstRec.Code != http.StatusOK {
+		t.Fatalf("first status = %d, want %d", firstRec.Code, http.StatusOK)
+	}
+
+	secondReq := httptest.NewRequest(http.MethodPost, "/qq/events", strings.NewReader(body))
+	secondRec := httptest.NewRecorder()
+	handler.ServeHTTP(secondRec, secondReq)
+	if secondRec.Code != http.StatusTooManyRequests {
+		t.Fatalf("second status = %d, want %d", secondRec.Code, http.StatusTooManyRequests)
 	}
 }

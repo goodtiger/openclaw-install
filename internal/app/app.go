@@ -14,6 +14,7 @@ import (
 	"github.com/goodtiger/openclaw-install/internal/bridge"
 	"github.com/goodtiger/openclaw-install/internal/config"
 	"github.com/goodtiger/openclaw-install/internal/install"
+	"github.com/goodtiger/openclaw-install/internal/shared"
 	"github.com/goodtiger/openclaw-install/internal/system"
 	"github.com/goodtiger/openclaw-install/internal/ui"
 	"github.com/goodtiger/openclaw-install/presets"
@@ -95,7 +96,7 @@ func runDoctor(args []string, out, errOut io.Writer) error {
 	fmt.Fprintf(out, "系统：%s/%s\n", report.Info.OS, report.Info.Arch)
 	fmt.Fprintf(out, "OpenClaw 目录：%s\n", report.Info.OpenClawHome)
 	fmt.Fprintf(out, "配置路径：%s\n", report.Info.ConfigPath)
-	fmt.Fprintf(out, "包管理器：%s\n", valueOrDefault(report.Info.PackageManager, "未检测到"))
+	fmt.Fprintf(out, "包管理器：%s\n", shared.ValueOrDefault(report.Info.PackageManager, "未检测到"))
 	fmt.Fprintf(out, "推荐模式：%s\n", report.RecommendedMode)
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "已检测工具：")
@@ -108,8 +109,7 @@ func runDoctor(args []string, out, errOut io.Writer) error {
 	fmt.Fprintf(out, "  curl: %s\n", boolLabel(report.Info.HasCurl))
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "镜像选择：")
-	keys := sortedKeys(report.MirrorNames)
-	for _, key := range keys {
+	for _, key := range shared.SortedStringKeys(report.MirrorNames) {
 		fmt.Fprintf(out, "  %s：%s\n", key, report.MirrorNames[key])
 	}
 	if len(report.Warnings) > 0 {
@@ -216,8 +216,14 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 	prompter := ui.NewPrompter(in, out)
 	defaultMode := install.Mode(options.mode)
 
-	state, _ := config.LoadInstallState(info.StatePath)
-	bridgeCfg, _ := loadExistingBridgeConfig(info.BridgeConfigPath)
+	state, err := config.LoadInstallState(info.StatePath)
+	if err != nil {
+		return err
+	}
+	bridgeCfg, err := loadExistingBridgeConfig(info.BridgeConfigPath)
+	if err != nil {
+		return err
+	}
 
 	if defaultMode == "" {
 		if state.Mode != "" {
@@ -368,6 +374,9 @@ func chooseMode(prompter *ui.Prompter, yes bool, defaultMode install.Mode) (inst
 }
 
 func chooseProviderPreset(prompter *ui.Prompter, bundle presets.Bundle, providerID string, yes bool, stateProviderID string) (presets.ProviderPreset, error) {
+	if len(bundle.Providers) == 0 {
+		return presets.ProviderPreset{}, errors.New("没有可用的供应商预设")
+	}
 	if providerID == "" && stateProviderID != "" {
 		providerID = stateProviderID
 	}
@@ -647,15 +656,6 @@ func flagSetHasOptions(fs *flag.FlagSet) bool {
 	return hasOptions
 }
 
-func sortedKeys(input map[string]string) []string {
-	keys := make([]string, 0, len(input))
-	for key := range input {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	return keys
-}
-
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -707,13 +707,6 @@ func normalizedProvisioner(value string) string {
 
 func usesBridgeProvisioner(provisioner string) bool {
 	return normalizedProvisioner(provisioner) == "bridge"
-}
-
-func valueOrDefault(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return value
 }
 
 func boolLabel(value bool) string {

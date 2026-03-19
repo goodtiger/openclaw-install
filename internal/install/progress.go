@@ -3,12 +3,43 @@ package install
 import (
 	"fmt"
 	"io"
-	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
+const (
+	progressStepPrepareWorkspace = "准备工作目录"
+	progressStepResolveMirrors   = "解析镜像源"
+	progressStepWriteConfig      = "写入配置文件"
+	progressStepGenerateAssets   = "生成运行时文件"
+	progressStepSaveState        = "保存安装状态"
+	progressStepInstallDeps      = "安装依赖"
+	progressStepInstallRuntime   = "安装 OpenClaw 运行时"
+	progressStepConfigureChannel = "配置通道"
+	progressStepVerify           = "验证安装结果"
+)
+
+var baseProgressSteps = []string{
+	progressStepPrepareWorkspace,
+	progressStepResolveMirrors,
+	progressStepWriteConfig,
+	progressStepGenerateAssets,
+	progressStepSaveState,
+	progressStepConfigureChannel,
+}
+
+var installRuntimeProgressSteps = []string{
+	progressStepInstallDeps,
+	progressStepInstallRuntime,
+}
+
+var verifyProgressSteps = []string{
+	progressStepVerify,
+}
+
 type progressTracker struct {
+	mu      sync.Mutex
 	out     io.Writer
 	total   int
 	current int
@@ -25,12 +56,12 @@ func newProgressTracker(out io.Writer, total int) *progressTracker {
 }
 
 func installStepCount(req Request) int {
-	total := 6
+	total := len(baseProgressSteps)
 	if !req.SkipInstall {
-		total += 2
+		total += len(installRuntimeProgressSteps)
 	}
 	if !req.SkipVerify {
-		total++
+		total += len(verifyProgressSteps)
 	}
 	return total
 }
@@ -39,6 +70,8 @@ func (p *progressTracker) Step(title string) {
 	if p == nil {
 		return
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.current++
 	fmt.Fprintf(p.out, "\n[%d/%d] %s\n", p.current, p.total, title)
 }
@@ -47,6 +80,8 @@ func (p *progressTracker) Detailf(format string, args ...any) {
 	if p == nil {
 		return
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	fmt.Fprintf(p.out, "  - %s\n", fmt.Sprintf(format, args...))
 }
 
@@ -54,16 +89,9 @@ func (p *progressTracker) Command(cmd string, args []string) {
 	if p == nil {
 		return
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	fmt.Fprintf(p.out, "  -> %s\n", formatCommand(cmd, args))
-}
-
-func sortedStringMapKeys(values map[string]string) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func formatCommand(cmd string, args []string) string {

@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -187,5 +189,25 @@ func TestBuildManagedConfigBailianDefaultsAndSkipsPluginChannels(t *testing.T) {
 	channels := managed["channels"].(map[string]any)
 	if len(channels) != 0 {
 		t.Fatalf("plugin-backed QQ should not be written into channels map, got %#v", channels)
+	}
+}
+
+func TestSaveJSONAtomicUsesUniqueTempFileAndCleansUp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+
+	if err := SaveJSONAtomic(path, map[string]any{"ok": true}); err != nil {
+		t.Fatalf("SaveJSONAtomic() error = %v", err)
+	}
+
+	matches, err := filepath.Glob(path + ".tmp-*")
+	if err != nil {
+		t.Fatalf("Glob() error = %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("expected temp files to be cleaned up, got %#v", matches)
+	}
+
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected target file to exist, stat err = %v", err)
 	}
 }

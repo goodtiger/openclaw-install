@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/goodtiger/openclaw-install/internal/shared"
 )
 
 func EnsureDir(path string) error {
@@ -16,7 +19,7 @@ func EnsureDir(path string) error {
 }
 
 func BackupIfExists(path, backupDir string, now time.Time) (string, error) {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		return "", nil
 	} else if err != nil {
 		return "", err
@@ -41,7 +44,7 @@ func BackupIfExists(path, backupDir string, now time.Time) (string, error) {
 
 func LoadMap(path string) (map[string]any, error) {
 	content, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		return map[string]any{}, nil
 	}
 	if err != nil {
@@ -73,7 +76,7 @@ func LoadBridgeConfig(path string) (BridgeConfig, error) {
 
 func LoadInstallState(path string) (InstallState, error) {
 	content, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		return InstallState{}, nil
 	}
 	if err != nil {
@@ -97,11 +100,33 @@ func SaveJSONAtomic(path string, value any) error {
 	}
 	content = append(content, '\n')
 
-	tempFile := path + ".tmp"
-	if err := os.WriteFile(tempFile, content, 0o600); err != nil {
+	tempFile, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tempFile, path)
+	tempPath := tempFile.Name()
+	defer func() {
+		if tempPath != "" {
+			_ = os.Remove(tempPath)
+		}
+	}()
+
+	if _, err := tempFile.Write(content); err != nil {
+		_ = tempFile.Close()
+		return err
+	}
+	if err := tempFile.Sync(); err != nil {
+		_ = tempFile.Close()
+		return err
+	}
+	if err := tempFile.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+	tempPath = ""
+	return nil
 }
 
 func SaveInstallState(path string, state InstallState) error {
@@ -111,7 +136,7 @@ func SaveInstallState(path string, state InstallState) error {
 func BuildManagedConfig(input ManagedConfigInput) map[string]any {
 	providerEntry := map[string]any{
 		"baseUrl": input.Provider.BaseURL,
-		"apiKey":  valueOrDefault(input.Provider.APIKey, "YOUR_API_KEY"),
+		"apiKey":  shared.ValueOrDefault(input.Provider.APIKey, "YOUR_API_KEY"),
 	}
 	if strings.TrimSpace(input.Provider.API) != "" {
 		providerEntry["api"] = input.Provider.API
@@ -133,8 +158,8 @@ func BuildManagedConfig(input ManagedConfigInput) map[string]any {
 			"bridgeURL":   bridgeURL(input.BridgeHost, channel.ListenAddr, channel.Path),
 			"listenAddr":  channel.ListenAddr,
 			"path":        channel.Path,
-			"dmPolicy":    valueOrDefault(channel.DMPolicy, "pairing"),
-			"groupPolicy": valueOrDefault(channel.GroupPolicy, "allowlist"),
+			"dmPolicy":    shared.ValueOrDefault(channel.DMPolicy, "pairing"),
+			"groupPolicy": shared.ValueOrDefault(channel.GroupPolicy, "allowlist"),
 			"credentials": cloneStringMap(channel.Fields),
 			"channelType": channel.Driver,
 		}
@@ -176,15 +201,15 @@ func BuildBridgeConfig(input ManagedConfigInput) BridgeConfig {
 		channels[channel.ID] = BridgeChannelConfig{
 			Enabled:         true,
 			Driver:          channel.Driver,
-			Provisioner:     valueOrDefault(channel.Provisioner, "bridge"),
+			Provisioner:     shared.ValueOrDefault(channel.Provisioner, "bridge"),
 			ListenAddr:      channel.ListenAddr,
 			Path:            channel.Path,
 			Fields:          cloneStringMap(channel.Fields),
 			PluginPackage:   channel.PluginPackage,
 			OpenClawChannel: channel.OpenClawChannel,
 			TokenFields:     slices.Clone(channel.TokenFields),
-			DMPolicy:        valueOrDefault(channel.DMPolicy, "pairing"),
-			GroupPolicy:     valueOrDefault(channel.GroupPolicy, "allowlist"),
+			DMPolicy:        shared.ValueOrDefault(channel.DMPolicy, "pairing"),
+			GroupPolicy:     shared.ValueOrDefault(channel.GroupPolicy, "allowlist"),
 		}
 	}
 
@@ -311,13 +336,6 @@ func cloneStringMap(input map[string]string) map[string]string {
 	return out
 }
 
-func valueOrDefault(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return value
-}
-
 func providerCatalog(provider ProviderConfig) []ProviderModel {
 	if len(provider.Catalog) > 0 {
 		return provider.Catalog
@@ -348,7 +366,7 @@ func providerCatalogToMaps(models []ProviderModel) []any {
 	for _, model := range models {
 		entry := map[string]any{
 			"id":        model.ID,
-			"name":      valueOrDefault(model.Name, model.ID),
+			"name":      shared.ValueOrDefault(model.Name, model.ID),
 			"reasoning": model.Reasoning,
 		}
 		if len(model.Input) > 0 {
@@ -372,5 +390,5 @@ func providerCatalogToMaps(models []ProviderModel) []any {
 }
 
 func usesBridgeProvisioner(provisioner string) bool {
-	return valueOrDefault(provisioner, "bridge") == "bridge"
+	return shared.ValueOrDefault(provisioner, "bridge") == "bridge"
 }
