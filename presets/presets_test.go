@@ -19,6 +19,10 @@ func TestLoad(t *testing.T) {
 	if _, ok := bundle.ChannelByID("qq"); !ok {
 		t.Fatal("expected qq channel preset to exist")
 	}
+
+	if _, ok := bundle.ChannelByID("wechat"); !ok {
+		t.Fatal("expected wechat channel preset to exist")
+	}
 }
 
 func TestMirrorPriorityPrefersChinaFriendlyCandidates(t *testing.T) {

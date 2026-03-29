@@ -77,6 +77,24 @@ func (w *Workflow) provisionPluginChannel(ctx context.Context, info system.Info,
 	}
 
 	channelName := shared.ValueOrDefault(channel.OpenClawChannel, channel.Driver)
+
+	// Handle login-based channels (like WeChat) that use QR scan instead of token
+	if channel.LoginRequired {
+		// Enable the plugin in config
+		enableKey := fmt.Sprintf("plugins.entries.%s.enabled", channelName)
+		w.progressDetailf("启用插件 %s", channelName)
+		if err := w.runOpenClawCommand(ctx, info, mode, []string{"config", "set", enableKey, "true"}, stdout, stderr); err != nil {
+			return fmt.Errorf("启用插件 %s 失败: %w", channel.Name, err)
+		}
+
+		// Interactive QR login
+		w.progressDetailf("正在启动 %s 扫码登录", channel.Name)
+		if err := w.runOpenClawCommand(ctx, info, mode, []string{"channels", "login", "--channel", channelName}, stdout, stderr); err != nil {
+			return fmt.Errorf("%s 扫码登录失败: %w", channel.Name, err)
+		}
+		return nil
+	}
+
 	args := []string{"channels", "add", "--channel", channelName}
 
 	token := pluginChannelToken(channel)

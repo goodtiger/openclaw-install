@@ -7,7 +7,7 @@
 - 自动生成或增量合并 `~/.openclaw/openclaw.json`
 - 默认生成百炼 Coding Plan 的模型配置
 - 预置国内常见 LLM 供应商配置
-- 默认提供 QQ `qqbot` 插件接入，并保留飞书、企业微信的 bridge 化 channel 接入
+- 默认提供微信（个人微信 ClawBot 插件）接入，并保留 QQ、飞书、企业微信等 channel 接入
 - 为 bridge 生成本地启动脚本，并在 Linux/macOS 尝试注册后台服务
 
 当前实现已经可以编译、运行、生成配置和 bridge 资产，但仍属于 v1，重点是先把安装链路打通。
@@ -82,14 +82,16 @@ Native 模式会做这些事情：
 
 当前内置以下 channel preset：
 
-- `qq`（默认，使用 `@sliverp/qqbot` 插件）
+- `wechat`（默认，使用 `@tencent-weixin/openclaw-weixin` 插件）
+- `qq`（使用 `@sliverp/qqbot` 插件）
 - `feishu`
 - `wecom`
 
 注意：
 
-- QQ 默认不是 bridge，而是通过 `openclaw plugins install @sliverp/qqbot@latest` 和 `openclaw channels add --channel qqbot --token "AppID:AppSecret"` 配置
-- 飞书、企业微信仍然通过本安装器生成的 bridge 服务接入
+- 微信默认通过 OpenClaw 插件方式接入，扫码登录，无需填写凭证
+- QQ 同样通过插件方式接入，需要 `AppID` 和 `AppSecret` 凭证
+- 飞书、企业微信通过本安装器生成的 bridge 服务接入
 
 ## 3. 构建与准备
 
@@ -171,7 +173,7 @@ scripts/build-release.sh linux/amd64 darwin/arm64 windows/amd64
 4. `apiKey`
 5. 主模型
 6. fallback 模型
-7. 是否启用 QQ / 飞书 / 企业微信，其中 QQ 默认启用
+7. 是否启用 微信 / QQ / 飞书 / 企业微信，其中微信默认启用
 8. 每个 channel 所需的凭证字段；飞书/企微额外需要监听地址和回调路径
 9. 最终确认
 
@@ -192,7 +194,7 @@ scripts/build-release.sh linux/amd64 darwin/arm64 windows/amd64
 说明：
 
 - `--yes` 会尽量使用默认值
-- 这条命令默认会继续要求你填写 QQ 的 `AppID` 和 `AppSecret`
+- 这条命令默认会触发微信扫码登录流程（无需填写凭证）
 - `--skip-verify` 会跳过安装后的验证步骤
 
 ### 4.3 仅重新写配置，不重新安装
@@ -273,7 +275,8 @@ scripts/build-release.sh linux/amd64 darwin/arm64 windows/amd64
 重要说明：
 
 - `--yes` 不是完全无人值守模式
-- QQ 默认启用，因此即使使用 `--yes`，程序通常仍会继续询问 `QQ Bot AppID` 和 `QQ Bot AppSecret`
+- 微信默认启用，使用 `--yes` 会触发扫码登录流程（无需填写凭证）
+- 如果启用了 QQ，程序会继续询问 `AppID` 和 `AppSecret`
 - 如果你启用了飞书或企微，程序仍然会继续询问必要的凭证字段
 
 ### 5.3 `reconfigure`
@@ -395,9 +398,35 @@ Native 模式常见文件：
 
 ## 7. Channel 配置说明
 
-### 7.1 QQ
+### 7.1 微信（个人微信）
 
-当前默认按 OpenClaw 插件方式接入，而不是 bridge。
+当前默认按 OpenClaw 插件方式接入。
+
+不需要手动填写凭证，安装后通过扫码登录绑定微信账号。
+
+前置条件：
+
+- iOS 微信版本 8.0.70 及以上
+- 微信 → 我 → 设置 → 插件 → 启用 ClawBot
+
+安装器会执行：
+
+```bash
+openclaw plugins install "@tencent-weixin/openclaw-weixin"
+openclaw config set plugins.entries.openclaw-weixin.enabled true
+openclaw channels login --channel openclaw-weixin
+```
+
+工作方式：
+
+- 安装器安装 `openclaw-weixin` 插件
+- 启用插件后发起扫码登录
+- 用户用微信扫码确认绑定
+- 微信消息通过 OpenClaw 原生 channel/plugin 链路处理
+
+### 7.2 QQ
+
+当前按 OpenClaw 插件方式接入（可选 channel，非默认）。
 
 需要的主要字段：
 
@@ -417,7 +446,7 @@ openclaw channels add --channel qqbot --token "AppID:AppSecret"
 - 使用 `AppID:AppSecret` 组装 token 并写入 OpenClaw channel 配置
 - QQ 消息通过 OpenClaw 原生 channel/plugin 链路处理
 
-### 7.2 飞书
+### 7.3 飞书
 
 当前按事件回调模式接入。
 
@@ -435,7 +464,7 @@ openclaw channels add --channel qqbot --token "AppID:AppSecret"
 - bridge 调用 LLM
 - bridge 再调用飞书开放接口发送回复
 
-### 7.3 企业微信
+### 7.4 企业微信
 
 当前支持基础回调/机器人 webhook 方式。
 
@@ -455,7 +484,7 @@ openclaw channels add --channel qqbot --token "AppID:AppSecret"
 
 ## 8. Bridge 服务注册行为
 
-如果启用了 bridge 类型 channel，安装器会为每个 channel 生成独立 bridge 启动脚本。QQ 默认走插件方式，不会生成 QQ bridge 脚本。
+如果启用了 bridge 类型 channel，安装器会为每个 channel 生成独立 bridge 启动脚本。微信和 QQ 都走插件方式，不会生成 bridge 脚本。飞书和企业微信使用 bridge 服务。
 
 ### 8.1 Linux
 
@@ -611,7 +640,7 @@ openclaw channels list
 
 特别是：
 
-- 默认 QQ 启用后仍然需要输入 `AppID` / `AppSecret`
+- 微信默认启用，使用 `--yes` 会触发扫码登录流程
 - 某些监听地址和路径也仍然可能继续询问
 
 ### 11.4 `reconfigure` 会不会把我手写的配置覆盖掉
@@ -645,7 +674,7 @@ openclaw channels list
 - 企业微信适配目前偏基础链路打通，不是完整平台集成
 - Docker 模式当前使用“本地构建 Node 镜像并 npm 安装 OpenClaw”的方式，而不是直接拉官方 OpenClaw 镜像
 - 镜像候选链已实现，但实际可用性仍取决于你所在网络环境
-- QQ 插件 channel 依赖本机 OpenClaw CLI 在真实环境里成功执行 `plugins install` 和 `channels add`
+- 微信和 QQ 插件 channel 依赖本机 OpenClaw CLI 在真实环境里成功执行 `plugins install` 和 `channels login` / `channels add`
 
 ## 13. 当前仓库中最重要的实现位置
 

@@ -165,6 +165,15 @@ func BuildManagedConfig(input ManagedConfigInput) map[string]any {
 		}
 	}
 
+	// Collect plugin channel IDs for plugins.allow list
+	pluginAllow := []any{}
+	for _, channel := range input.Channels {
+		if !usesBridgeProvisioner(channel.Provisioner) && channel.PluginPackage != "" {
+			channelName := shared.ValueOrDefault(channel.OpenClawChannel, channel.Driver)
+			pluginAllow = append(pluginAllow, channelName)
+		}
+	}
+
 	agentModels := map[string]any{}
 	for _, model := range providerCatalog(input.Provider) {
 		agentModels[joinModelID(input.Provider.ID, model.ID)] = map[string]any{}
@@ -173,7 +182,7 @@ func BuildManagedConfig(input ManagedConfigInput) map[string]any {
 		agentModels[joinModelID(input.Provider.ID, input.Provider.PrimaryModel)] = map[string]any{}
 	}
 
-	return map[string]any{
+	result := map[string]any{
 		"gateway": map[string]any{
 			"port": DefaultGatewayPort,
 			"bind": input.GatewayBind,
@@ -193,6 +202,12 @@ func BuildManagedConfig(input ManagedConfigInput) map[string]any {
 		},
 		"channels": channels,
 	}
+	if len(pluginAllow) > 0 {
+		result["plugins"] = map[string]any{
+			"allow": pluginAllow,
+		}
+	}
+	return result
 }
 
 func BuildBridgeConfig(input ManagedConfigInput) BridgeConfig {
@@ -208,6 +223,7 @@ func BuildBridgeConfig(input ManagedConfigInput) BridgeConfig {
 			PluginPackage:   channel.PluginPackage,
 			OpenClawChannel: channel.OpenClawChannel,
 			TokenFields:     slices.Clone(channel.TokenFields),
+			LoginRequired:   channel.LoginRequired,
 			DMPolicy:        shared.ValueOrDefault(channel.DMPolicy, "pairing"),
 			GroupPolicy:     shared.ValueOrDefault(channel.GroupPolicy, "allowlist"),
 		}

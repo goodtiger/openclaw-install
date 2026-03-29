@@ -1,10 +1,12 @@
 package system
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
 )
 
 type Info struct {
@@ -18,6 +20,7 @@ type Info struct {
 	RuntimeDir       string
 	HasDocker        bool
 	HasCompose       bool
+	DockerHealthy    bool
 	HasNode          bool
 	HasNPM           bool
 	HasOpenClaw      bool
@@ -26,6 +29,7 @@ type Info struct {
 	PackageManager   string
 	ExistingConfig   bool
 	Elevated         bool
+	IsTTY            bool
 }
 
 func Detect() (Info, error) {
@@ -36,6 +40,7 @@ func Detect() (Info, error) {
 
 	openClawHome := filepath.Join(homeDir, ".openclaw")
 
+	hasDocker := HasCommand("docker")
 	info := Info{
 		OS:               runtime.GOOS,
 		Arch:             runtime.GOARCH,
@@ -45,8 +50,9 @@ func Detect() (Info, error) {
 		BridgeConfigPath: filepath.Join(openClawHome, "bridge.json"),
 		StatePath:        filepath.Join(openClawHome, "install-state.json"),
 		RuntimeDir:       filepath.Join(openClawHome, "runtime"),
-		HasDocker:        HasCommand("docker"),
+		HasDocker:        hasDocker,
 		HasCompose:       hasCompose(),
+		DockerHealthy:    hasDocker && dockerDaemonHealthy(),
 		HasNode:          HasCommand("node"),
 		HasNPM:           HasCommand("npm"),
 		HasOpenClaw:      HasCommand("openclaw"),
@@ -55,6 +61,7 @@ func Detect() (Info, error) {
 		PackageManager:   detectPackageManager(),
 		ExistingConfig:   fileExists(filepath.Join(openClawHome, "openclaw.json")),
 		Elevated:         isElevated(),
+		IsTTY:            isTerminal(),
 	}
 
 	return info, nil
@@ -97,6 +104,20 @@ func detectPackageManager() string {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func dockerDaemonHealthy() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "docker", "info").Run() == nil
+}
+
+func isTerminal() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 func isElevated() bool {

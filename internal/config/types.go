@@ -44,6 +44,7 @@ type ChannelSelection struct {
 	PluginPackage   string            `json:"pluginPackage,omitempty"`
 	OpenClawChannel string            `json:"openClawChannel,omitempty"`
 	TokenFields     []string          `json:"tokenFields,omitempty"`
+	LoginRequired   bool              `json:"loginRequired,omitempty"`
 	DMPolicy        string            `json:"dmPolicy,omitempty"`
 	GroupPolicy     string            `json:"groupPolicy,omitempty"`
 }
@@ -77,6 +78,7 @@ type BridgeChannelConfig struct {
 	PluginPackage   string            `json:"pluginPackage,omitempty"`
 	OpenClawChannel string            `json:"openClawChannel,omitempty"`
 	TokenFields     []string          `json:"tokenFields,omitempty"`
+	LoginRequired   bool              `json:"loginRequired,omitempty"`
 	DMPolicy        string            `json:"dmPolicy,omitempty"`
 	GroupPolicy     string            `json:"groupPolicy,omitempty"`
 }

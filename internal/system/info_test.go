@@ -31,3 +31,28 @@ func TestIsElevatedMatchesPlatformExpectation(t *testing.T) {
 		t.Fatalf("isElevated() = %v, want %v", got, os.Geteuid() == 0)
 	}
 }
+
+func TestDetectReturnsDockerHealthyField(t *testing.T) {
+	info, err := Detect()
+	if err != nil {
+		t.Fatalf("Detect() error = %v", err)
+	}
+	// DockerHealthy should be false when HasDocker is false
+	if !info.HasDocker && info.DockerHealthy {
+		t.Error("DockerHealthy should be false when HasDocker is false")
+	}
+}
+
+func TestDetectReturnsTTYField(t *testing.T) {
+	info, err := Detect()
+	if err != nil {
+		t.Fatalf("Detect() error = %v", err)
+	}
+	// In test context, stdin is usually not a terminal
+	_ = info.IsTTY // Just ensure the field exists and doesn't panic
+}
+
+func TestIsTerminalDoesNotPanic(t *testing.T) {
+	// Should not panic regardless of stdin state
+	_ = isTerminal()
+}

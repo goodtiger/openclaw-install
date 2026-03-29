@@ -1,11 +1,28 @@
 {
   "channels": [
     {
+      "id": "wechat",
+      "name": "微信（个人微信 ClawBot 插件）",
+      "driver": "wechat",
+      "provisioner": "openclaw-plugin",
+      "default_enabled": true,
+      "plugin_package": "@tencent-weixin/openclaw-weixin@latest",
+      "openclaw_channel": "openclaw-weixin",
+      "token_fields": [],
+      "login_required": true,
+      "notes": "默认微信通道。安装插件后通过扫码登录绑定微信账号，无需手动填写凭证。安装命令：npx -y @tencent-weixin/openclaw-weixin-cli@latest install",
+      "required_fields": [],
+      "defaults": {
+        "dmPolicy": "pairing",
+        "groupPolicy": "allowlist"
+      }
+    },
+    {
       "id": "qq",
       "name": "QQ（qqbot 插件）",
       "driver": "qqbot",
       "provisioner": "openclaw-plugin",
-      "default_enabled": true,
+      "default_enabled": false,
       "plugin_package": "@sliverp/qqbot@latest",
       "openclaw_channel": "qqbot",
       "token_fields": ["app_id", "app_secret"],
@@ -14,12 +31,14 @@
         {
           "key": "app_id",
           "label": "QQ Bot AppID",
-          "secret": false
+          "secret": false,
+          "env_key": "OPENCLAW_QQ_APP_ID"
         },
         {
           "key": "app_secret",
           "label": "QQ Bot AppSecret",
-          "secret": true
+          "secret": true,
+          "env_key": "OPENCLAW_QQ_APP_SECRET"
         }
       ],
       "defaults": {
@@ -38,23 +57,27 @@
         {
           "key": "app_id",
           "label": "飞书 App ID",
-          "secret": false
+          "secret": false,
+          "env_key": "OPENCLAW_FEISHU_APP_ID"
         },
         {
           "key": "app_secret",
           "label": "飞书 App Secret",
-          "secret": true
+          "secret": true,
+          "env_key": "OPENCLAW_FEISHU_APP_SECRET"
         },
         {
           "key": "verification_token",
           "label": "Verification Token（校验令牌）",
-          "secret": true
+          "secret": true,
+          "env_key": "OPENCLAW_FEISHU_VERIFY_TOKEN"
         },
         {
           "key": "encrypt_key",
           "label": "Encrypt Key（加密密钥）",
           "secret": true,
-          "optional": true
+          "optional": true,
+          "env_key": "OPENCLAW_FEISHU_ENCRYPT_KEY"
         }
       ],
       "defaults": {
@@ -74,37 +97,43 @@
           "key": "corp_id",
           "label": "Corp ID（企业 ID）",
           "secret": false,
-          "optional": true
+          "optional": true,
+          "env_key": "OPENCLAW_WECOM_CORP_ID"
         },
         {
           "key": "agent_id",
           "label": "Agent ID（应用 ID）",
           "secret": false,
-          "optional": true
+          "optional": true,
+          "env_key": "OPENCLAW_WECOM_AGENT_ID"
         },
         {
           "key": "secret",
           "label": "Agent Secret / Webhook Key（应用密钥 / 机器人 Key）",
           "secret": true,
-          "optional": true
+          "optional": true,
+          "env_key": "OPENCLAW_WECOM_SECRET"
         },
         {
           "key": "token",
           "label": "Callback Token（回调令牌）",
           "secret": true,
-          "optional": true
+          "optional": true,
+          "env_key": "OPENCLAW_WECOM_TOKEN"
         },
         {
           "key": "encoding_aes_key",
           "label": "Encoding AES Key（加密 AES Key）",
           "secret": true,
-          "optional": true
+          "optional": true,
+          "env_key": "OPENCLAW_WECOM_AES_KEY"
         },
         {
           "key": "webhook_url",
           "label": "Webhook URL（机器人 Webhook 地址）",
           "secret": true,
-          "optional": true
+          "optional": true,
+          "env_key": "OPENCLAW_WECOM_WEBHOOK_URL"
         }
       ],
       "defaults": {

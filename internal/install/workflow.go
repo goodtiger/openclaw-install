@@ -587,11 +587,12 @@ func (w *Workflow) runPrivileged(ctx context.Context, info system.Info, cmd stri
 }
 
 // RecommendedMode 根据当前系统环境返回建议的安装模式。
+// 使用 DockerHealthy（通过 docker info 检测守护进程）而非仅检查 PATH。
 func RecommendedMode(info system.Info) Mode {
 	if info.OS == "windows" {
 		return ModeDocker
 	}
-	if info.HasDocker && info.HasCompose {
+	if info.DockerHealthy && info.HasCompose {
 		return ModeDocker
 	}
 	return ModeNative

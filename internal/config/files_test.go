@@ -211,3 +211,63 @@ func TestSaveJSONAtomicUsesUniqueTempFileAndCleansUp(t *testing.T) {
 		t.Fatalf("expected target file to exist, stat err = %v", err)
 	}
 }
+
+func TestBuildManagedConfigWeChatPluginWithLoginRequired(t *testing.T) {
+	input := ManagedConfigInput{
+		InstallerVersion: "0.1.0",
+		Mode:             "native",
+		GatewayBind:      "loopback",
+		BridgeHost:       "127.0.0.1",
+		ManagedAt:        time.Unix(1700000000, 0),
+		MirrorNames:      map[string]string{"npm_registry": "npmmirror"},
+		Provider: ProviderConfig{
+			ID:           "deepseek",
+			Name:         "DeepSeek",
+			Type:         "openai-compatible",
+			BaseURL:      "https://api.deepseek.com/v1",
+			APIKey:       "test-key",
+			PrimaryModel: "deepseek-chat",
+		},
+		Channels: []ChannelSelection{
+			{
+				ID:              "wechat",
+				Name:            "微信（个人微信 ClawBot 插件）",
+				Driver:          "wechat",
+				Provisioner:     "openclaw-plugin",
+				PluginPackage:   "@tencent-weixin/openclaw-weixin@latest",
+				OpenClawChannel: "openclaw-weixin",
+				LoginRequired:   true,
+				TokenFields:     []string{},
+				Fields:          map[string]string{},
+			},
+		},
+	}
+
+	managed := BuildManagedConfig(input)
+
+	channels := managed["channels"].(map[string]any)
+	if len(channels) != 0 {
+		t.Fatalf("plugin-backed WeChat should not be written into channels map, got %#v", channels)
+	}
+
+	plugins, ok := managed["plugins"].(map[string]any)
+	if !ok {
+		t.Fatal("expected plugins block to exist in managed config")
+	}
+
+	allow, ok := plugins["allow"].([]any)
+	if !ok {
+		t.Fatal("expected plugins.allow to be a list")
+	}
+
+	found := false
+	for _, item := range allow {
+		if item == "openclaw-weixin" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected plugins.allow to contain 'openclaw-weixin'")
+	}
+}

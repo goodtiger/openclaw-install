@@ -53,6 +53,7 @@ type CredentialField struct {
 	Label    string `json:"label"`
 	Secret   bool   `json:"secret"`
 	Optional bool   `json:"optional,omitempty"`
+	EnvKey   string `json:"env_key,omitempty"`
 }
 
 type ChannelPreset struct {
@@ -66,6 +67,7 @@ type ChannelPreset struct {
 	PluginPackage   string            `json:"plugin_package,omitempty"`
 	OpenClawChannel string            `json:"openclaw_channel,omitempty"`
 	TokenFields     []string          `json:"token_fields,omitempty"`
+	LoginRequired   bool              `json:"login_required,omitempty"`
 	Notes           string            `json:"notes"`
 	RequiredFields  []CredentialField `json:"required_fields"`
 	Defaults        map[string]any    `json:"defaults"`

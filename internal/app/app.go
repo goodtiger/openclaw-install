@@ -55,6 +55,12 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 			return 1
 		}
 		return 0
+	case "upgrade":
+		if err := runUpgrade(args[1:], out, errOut); err != nil {
+			fmt.Fprintln(errOut, "upgrade 执行失败：", err)
+			return 1
+		}
+		return 0
 	case "bridge":
 		if err := runBridge(args[1:], out, errOut); err != nil {
 			fmt.Fprintln(errOut, "bridge 执行失败：", err)
@@ -70,6 +76,7 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 
 func runDoctor(args []string, out, errOut io.Writer) error {
 	fs := newFlagSet("doctor", errOut, "检查本机环境、依赖检测结果与镜像可达性。")
+	previewFlag := fs.Bool("preview", false, "预览自动检测的配置值及来源")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -101,6 +108,9 @@ func runDoctor(args []string, out, errOut io.Writer) error {
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "已检测工具：")
 	fmt.Fprintf(out, "  docker: %s\n", boolLabel(report.Info.HasDocker))
+	if report.Info.HasDocker {
+		fmt.Fprintf(out, "  docker daemon: %s\n", boolLabel(report.Info.DockerHealthy))
+	}
 	fmt.Fprintf(out, "  docker compose: %s\n", boolLabel(report.Info.HasCompose))
 	fmt.Fprintf(out, "  node: %s\n", boolLabel(report.Info.HasNode))
 	fmt.Fprintf(out, "  npm: %s\n", boolLabel(report.Info.HasNPM))
@@ -112,6 +122,12 @@ func runDoctor(args []string, out, errOut io.Writer) error {
 	for _, key := range shared.SortedStringKeys(report.MirrorNames) {
 		fmt.Fprintf(out, "  %s：%s\n", key, report.MirrorNames[key])
 	}
+
+	if *previewFlag {
+		fmt.Fprintln(out, "")
+		printDetectionPreview(out, bundle, info, report)
+	}
+
 	if len(report.Warnings) > 0 {
 		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "警告：")
@@ -120,6 +136,81 @@ func runDoctor(args []string, out, errOut io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// printDetectionPreview shows what the auto-detect engine would resolve for each config value.
+func printDetectionPreview(out io.Writer, bundle presets.Bundle, info system.Info, report install.DoctorReport) {
+	fmt.Fprintln(out, "检测结果：")
+
+	// Mode
+	fmt.Fprintf(out, "  ├─ 安装模式：    %-16s", report.RecommendedMode)
+	if report.Info.DockerHealthy && report.Info.HasCompose {
+		fmt.Fprintln(out, "(检测到 Docker 守护进程)")
+	} else {
+		fmt.Fprintln(out, "(Docker 不可用，使用 native 模式)")
+	}
+
+	// Provider
+	providerResolved := shared.ResolveWithSource(
+		shared.ResolvedValue{Value: os.Getenv("OPENCLAW_PROVIDER"), Source: "env:OPENCLAW_PROVIDER"},
+	)
+	if providerResolved.Value == "" {
+		for _, p := range bundle.Providers {
+			if p.APIKeyEnv == "" {
+				continue
+			}
+			if v := strings.TrimSpace(os.Getenv(p.APIKeyEnv)); v != "" {
+				providerResolved = shared.ResolvedValue{Value: p.ID, Source: fmt.Sprintf("env:%s (推断)", p.APIKeyEnv)}
+				break
+			}
+		}
+	}
+	if providerResolved.Value != "" {
+		provider, ok := bundle.ProviderByID(providerResolved.Value)
+		name := providerResolved.Value
+		if ok {
+			name = provider.Name
+		}
+		fmt.Fprintf(out, "  ├─ 供应商：      %-16s(%s)\n", name, providerResolved.Source)
+	} else {
+		fmt.Fprintln(out, "  ├─ 供应商：      未检测到          (需手动选择)")
+	}
+
+	// API Key
+	apiKeyResolved := shared.ResolveWithSource(
+		shared.ResolvedValue{Value: os.Getenv("OPENCLAW_API_KEY"), Source: "env:OPENCLAW_API_KEY"},
+	)
+	if apiKeyResolved.Value == "" && providerResolved.Value != "" {
+		if provider, ok := bundle.ProviderByID(providerResolved.Value); ok && provider.APIKeyEnv != "" {
+			apiKeyResolved = shared.ResolveWithSource(
+				shared.ResolvedValue{Value: os.Getenv(provider.APIKeyEnv), Source: fmt.Sprintf("env:%s", provider.APIKeyEnv)},
+			)
+		}
+	}
+	if apiKeyResolved.Value != "" {
+		fmt.Fprintf(out, "  ├─ API Key：     %-16s(%s)\n", shared.MaskSecret(apiKeyResolved.Value), apiKeyResolved.Source)
+	} else {
+		fmt.Fprintln(out, "  ├─ API Key：     未检测到          (需手动输入)")
+	}
+
+	// Model
+	modelResolved := shared.ResolveWithSource(
+		shared.ResolvedValue{Value: os.Getenv("OPENCLAW_MODEL"), Source: "env:OPENCLAW_MODEL"},
+	)
+	if modelResolved.Value == "" && providerResolved.Value != "" {
+		if provider, ok := bundle.ProviderByID(providerResolved.Value); ok && provider.DefaultModel != "" {
+			modelResolved = shared.ResolvedValue{Value: provider.DefaultModel, Source: "默认"}
+		}
+	}
+	if modelResolved.Value != "" {
+		fmt.Fprintf(out, "  ├─ 主模型：      %-16s(%s)\n", modelResolved.Value, modelResolved.Source)
+	} else {
+		fmt.Fprintln(out, "  ├─ 主模型：      未检测到          (需手动选择)")
+	}
+
+	fmt.Fprintln(out, "  └─ 通道：        无自动检测        (需手动配置)")
+	fmt.Fprintln(out, "")
+	fmt.Fprintln(out, "运行 openclaw-install install 以使用这些设置安装。")
 }
 
 func runInstall(args []string, in io.Reader, out, errOut io.Writer) error {
@@ -213,6 +304,11 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 		return err
 	}
 
+	// Non-TTY safety: require --yes when stdin is not a terminal.
+	if !info.IsTTY && !options.yes {
+		return errors.New("非交互式终端中运行，请使用 --yes 参数跳过提示")
+	}
+
 	prompter := ui.NewPrompter(in, out)
 	defaultMode := install.Mode(options.mode)
 
@@ -226,7 +322,9 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 	}
 
 	if defaultMode == "" {
-		if state.Mode != "" {
+		if envMode := strings.TrimSpace(os.Getenv("OPENCLAW_MODE")); envMode != "" {
+			defaultMode = install.Mode(envMode)
+		} else if state.Mode != "" {
 			defaultMode = install.Mode(state.Mode)
 		} else {
 			defaultMode = install.RecommendedMode(info)
@@ -295,25 +393,50 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 	}
 
 	fmt.Fprintln(out, "")
-	if options.reconfigure {
-		fmt.Fprintln(out, "重配置完成。")
+	printSuccessSummary(out, req, result, options.reconfigure)
+	return nil
+}
+
+// printSuccessSummary prints a visually distinct success box after install/reconfigure.
+func printSuccessSummary(out io.Writer, req install.Request, result install.Result, reconfigure bool) {
+	border := "╔══════════════════════════════════════════════════════════╗"
+	bottom := "╚══════════════════════════════════════════════════════════╝"
+	sep := "╟──────────────────────────────────────────────────────────╢"
+
+	title := "安装完成"
+	if reconfigure {
+		title = "重配置完成"
+	}
+
+	fmt.Fprintln(out, border)
+	fmt.Fprintf(out, "║  %s%s║\n", title, strings.Repeat(" ", 56-len([]rune(title))*2))
+	fmt.Fprintln(out, sep)
+	fmt.Fprintf(out, "║  安装模式：%-47s║\n", req.Mode)
+	fmt.Fprintf(out, "║  供应商：  %-47s║\n", fmt.Sprintf("%s (%s)", req.Provider.Name, req.Provider.ID))
+	fmt.Fprintf(out, "║  主模型：  %-47s║\n", req.Provider.PrimaryModel)
+	fmt.Fprintf(out, "║  API Key： %-47s║\n", shared.MaskSecret(req.Provider.APIKey))
+	if len(req.Channels) == 0 {
+		fmt.Fprintf(out, "║  通道：    %-47s║\n", "未启用")
 	} else {
-		fmt.Fprintln(out, "安装完成。")
+		fmt.Fprintf(out, "║  通道：    %-47s║\n", strings.Join(install.ChannelIDs(req.Channels), ", "))
 	}
-	fmt.Fprintf(out, "配置文件：%s\n", result.ConfigPath)
-	fmt.Fprintf(out, "桥接配置：%s\n", result.BridgeConfigPath)
-	fmt.Fprintf(out, "状态文件：%s\n", result.StatePath)
-	fmt.Fprintf(out, "运行目录：%s\n", result.RuntimeDir)
+	fmt.Fprintln(out, sep)
+	fmt.Fprintf(out, "║  配置文件：%-47s║\n", result.ConfigPath)
+	fmt.Fprintf(out, "║  桥接配置：%-47s║\n", result.BridgeConfigPath)
 	if result.BackupFile != "" {
-		fmt.Fprintf(out, "备份文件：%s\n", result.BackupFile)
+		fmt.Fprintf(out, "║  备份文件：%-47s║\n", result.BackupFile)
 	}
+	fmt.Fprintln(out, sep)
+	fmt.Fprintf(out, "║  试试看：  %-47s║\n", "openclaw chat \"你好\"")
+	fmt.Fprintln(out, bottom)
+
 	if len(result.Warnings) > 0 {
+		fmt.Fprintln(out, "")
 		fmt.Fprintln(out, "警告：")
 		for _, warning := range result.Warnings {
 			fmt.Fprintf(out, "  - %s\n", warning)
 		}
 	}
-	return nil
 }
 
 func runBridge(args []string, out, errOut io.Writer) error {
@@ -377,8 +500,13 @@ func chooseProviderPreset(prompter *ui.Prompter, bundle presets.Bundle, provider
 	if len(bundle.Providers) == 0 {
 		return presets.ProviderPreset{}, errors.New("没有可用的供应商预设")
 	}
+	// 1. Explicit flag
 	if providerID == "" && stateProviderID != "" {
 		providerID = stateProviderID
+	}
+	// 2. OPENCLAW_PROVIDER env var
+	if providerID == "" {
+		providerID = strings.TrimSpace(os.Getenv("OPENCLAW_PROVIDER"))
 	}
 	if providerID != "" {
 		provider, ok := bundle.ProviderByID(providerID)
@@ -386,6 +514,15 @@ func chooseProviderPreset(prompter *ui.Prompter, bundle presets.Bundle, provider
 			return presets.ProviderPreset{}, fmt.Errorf("未知的供应商预设 %q", providerID)
 		}
 		return provider, nil
+	}
+	// 3. Infer from provider-specific API key env vars (first-match-wins in preset order)
+	for _, provider := range bundle.Providers {
+		if provider.APIKeyEnv == "" {
+			continue
+		}
+		if v := strings.TrimSpace(os.Getenv(provider.APIKeyEnv)); v != "" {
+			return provider, nil
+		}
 	}
 	if yes {
 		return bundle.Providers[0], nil
@@ -414,9 +551,9 @@ func buildProviderConfig(prompter *ui.Prompter, preset presets.ProviderPreset, e
 		Catalog: convertProviderCatalog(preset.Catalog),
 	}
 
-	baseURL := firstNonEmpty(options.baseURL, existing.BaseURL, preset.BaseURL)
-	apiKey := firstNonEmpty(options.apiKey, existing.APIKey, os.Getenv(preset.APIKeyEnv), placeholderAPIKey)
-	primaryModel := firstNonEmpty(options.primaryModel, existing.PrimaryModel, preset.DefaultModel)
+	baseURL := firstNonEmpty(options.baseURL, os.Getenv("OPENCLAW_BASE_URL"), existing.BaseURL, preset.BaseURL)
+	apiKey := firstNonEmpty(options.apiKey, os.Getenv("OPENCLAW_API_KEY"), os.Getenv(preset.APIKeyEnv), existing.APIKey, placeholderAPIKey)
+	primaryModel := firstNonEmpty(options.primaryModel, os.Getenv("OPENCLAW_MODEL"), existing.PrimaryModel, preset.DefaultModel)
 	if primaryModel == "" {
 		modelIDs := providerModelIDs(preset, cfg.Catalog)
 		if len(modelIDs) > 0 {
@@ -513,6 +650,7 @@ func buildChannelSelections(prompter *ui.Prompter, bundle presets.Bundle, existi
 			PluginPackage:   preset.PluginPackage,
 			OpenClawChannel: preset.OpenClawChannel,
 			TokenFields:     slices.Clone(preset.TokenFields),
+			LoginRequired:   preset.LoginRequired,
 			DMPolicy:        dmPolicy,
 			GroupPolicy:     groupPolicy,
 		})
@@ -551,8 +689,12 @@ func collectNetworkConfig(prompter *ui.Prompter, preset presets.ChannelPreset, e
 func collectCredentialFields(prompter *ui.Prompter, preset presets.ChannelPreset, existing config.BridgeChannelConfig, yes bool) (map[string]string, error) {
 	fields := make(map[string]string, len(preset.RequiredFields))
 	for _, field := range preset.RequiredFields {
-		defaultValue := existing.Fields[field.Key]
+		defaultValue := firstNonEmpty(envOrEmpty(field.EnvKey), existing.Fields[field.Key])
 		if yes && field.Optional {
+			fields[field.Key] = defaultValue
+			continue
+		}
+		if yes && strings.TrimSpace(defaultValue) != "" {
 			fields[field.Key] = defaultValue
 			continue
 		}
@@ -619,15 +761,18 @@ func printHelp(out io.Writer) {
 	fmt.Fprintln(out, "openclaw-install")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "命令：")
-	fmt.Fprintln(out, "  install       交互式安装流程")
-	fmt.Fprintln(out, "  doctor        检查本机环境与镜像可达性")
-	fmt.Fprintln(out, "  reconfigure   不重新安装，只重写 provider/channel 配置")
-	fmt.Fprintln(out, "  bridge serve  启动单个 bridge 通道进程")
-	fmt.Fprintln(out, "  version       输出安装器版本")
+	fmt.Fprintln(out, "  install            交互式安装流程")
+	fmt.Fprintln(out, "  doctor             检查本机环境与镜像可达性")
+	fmt.Fprintln(out, "  doctor --preview   预览自动检测的配置值及来源")
+	fmt.Fprintln(out, "  reconfigure        不重新安装，只重写 provider/channel 配置")
+	fmt.Fprintln(out, "  bridge serve       启动单个 bridge 通道进程")
+	fmt.Fprintln(out, "  upgrade            自我更新到最新版本")
+	fmt.Fprintln(out, "  version            输出安装器版本")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "示例：")
 	fmt.Fprintln(out, "  openclaw-install install")
-	fmt.Fprintln(out, "  openclaw-install doctor")
+	fmt.Fprintln(out, "  openclaw-install install --yes            # 全自动安装")
+	fmt.Fprintln(out, "  openclaw-install doctor --preview         # 预览检测结果")
 	fmt.Fprintln(out, "  openclaw-install bridge serve --channel feishu")
 }
 
@@ -714,4 +859,12 @@ func boolLabel(value bool) string {
 		return "已检测"
 	}
 	return "未检测"
+}
+
+// envOrEmpty returns the env var value or empty string if the key is empty or unset.
+func envOrEmpty(key string) string {
+	if key == "" {
+		return ""
+	}
+	return strings.TrimSpace(os.Getenv(key))
 }
