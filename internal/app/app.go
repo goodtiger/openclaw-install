@@ -62,9 +62,27 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 			return 1
 		}
 		return 0
+	case "validate":
+		if err := runValidate(args[1:], out, errOut); err != nil {
+			fmt.Fprintln(errOut, "validate 执行失败：", err)
+			return 1
+		}
+		return 0
 	case "bridge":
 		if err := runBridge(args[1:], out, errOut); err != nil {
 			fmt.Fprintln(errOut, "bridge 执行失败：", err)
+			return 1
+		}
+		return 0
+	case "channels":
+		if err := runChannelsList(args[1:], out, errOut); err != nil {
+			fmt.Fprintln(errOut, "channels 执行失败：", err)
+			return 1
+		}
+		return 0
+	case "providers":
+		if err := runProvidersList(out); err != nil {
+			fmt.Fprintln(errOut, "providers 执行失败：", err)
 			return 1
 		}
 		return 0
@@ -791,6 +809,9 @@ func printHelp(out io.Writer) {
 	fmt.Fprintln(out, "  doctor --preview   预览自动检测的配置值及来源")
 	fmt.Fprintln(out, "  reconfigure        不重新安装，只重写 provider/channel 配置")
 	fmt.Fprintln(out, "  bridge serve       启动单个 bridge 通道进程")
+	fmt.Fprintln(out, "  channels list      列出所有可用通道及已启用的通道")
+	fmt.Fprintln(out, "  providers list     列出所有内置供应商预设")
+	fmt.Fprintln(out, "  validate           验证配置文件格式与有效性")
 	fmt.Fprintln(out, "  upgrade            自我更新到最新版本")
 	fmt.Fprintln(out, "  version            输出安装器版本")
 	fmt.Fprintln(out, "")
@@ -886,21 +907,4 @@ func envOrEmpty(key string) string {
 		return ""
 	}
 	return strings.TrimSpace(os.Getenv(key))
-}
-
-func runUpgrade(args []string, out, errOut io.Writer) error {
-	fs := newFlagSet("upgrade", errOut, "自我更新到最新版本。")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	}
-
-	// TODO: Implementation of upgrade functionality would go here
-	// Since this is an installer for OpenClaw, the upgrade functionality
-	// should probably update itself by downloading the new binary
-
-	fmt.Fprintln(out, "升级功能未实现")
-	return nil
 }
