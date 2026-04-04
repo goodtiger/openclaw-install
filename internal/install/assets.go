@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/goodtiger/openclaw-install/internal/config"
+	"github.com/goodtiger/openclaw-install/internal/shared"
 	"github.com/goodtiger/openclaw-install/internal/system"
 )
 
@@ -49,7 +50,7 @@ func (w *Workflow) writeAssets(ctx context.Context, info system.Info, req Reques
 	}
 
 	for _, channel := range req.Channels {
-		if !usesBridgeProvisioner(channel.Provisioner) {
+		if !shared.UsesBridgeProvisioner(channel.Provisioner) {
 			continue
 		}
 		if err := validateChannelID(channel.ID); err != nil {
@@ -183,7 +184,7 @@ func (w *Workflow) registerBridgeService(ctx context.Context, info system.Info, 
 func (w *Workflow) cleanupObsoleteChannelAssets(ctx context.Context, info system.Info, previous config.InstallState, current []config.ChannelSelection, stdout, stderr io.Writer) error {
 	currentBridgeIDs := []string{}
 	for _, channel := range current {
-		if usesBridgeProvisioner(channel.Provisioner) {
+		if shared.UsesBridgeProvisioner(channel.Provisioner) {
 			if err := validateChannelID(channel.ID); err != nil {
 				return err
 			}

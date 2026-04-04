@@ -149,7 +149,7 @@ func (w *Workflow) Doctor(ctx context.Context, info system.Info) (DoctorReport, 
 func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, stdout, stderr io.Writer) (Result, error) {
 	normalizedReq, err := req.NormalizeAndValidate(info)
 	if err != nil {
-		return Result{}, err
+		return Result{}, fmt.Errorf("normalize request: %w", err)
 	}
 	req = normalizedReq
 	resetProgress := w.beginProgress(stdout, req)
@@ -157,7 +157,7 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 
 	w.progressStep(progressStepPrepareWorkspace)
 	if err := config.EnsureDir(info.OpenClawHome); err != nil {
-		return Result{}, err
+		return Result{}, fmt.Errorf("create workspace dir %s: %w", info.OpenClawHome, err)
 	}
 
 	result := Result{
@@ -169,7 +169,7 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 
 	backupFile, err := config.BackupIfExists(info.ConfigPath, filepath.Join(info.OpenClawHome, ".backups"), w.Now())
 	if err != nil {
-		return Result{}, err
+		return Result{}, fmt.Errorf("backup config: %w", err)
 	}
 	result.BackupFile = backupFile
 	if backupFile != "" {
@@ -190,23 +190,23 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 
 	previousState, err := config.LoadInstallState(info.StatePath)
 	if err != nil {
-		return Result{}, err
+		return Result{}, fmt.Errorf("load install state: %w", err)
 	}
 
 	assetWarnings, err := w.applyConfigAndAssets(ctx, info, req, previousState, mirrors, result.MirrorNames, stdout, stderr)
 	if err != nil {
-		return Result{}, err
+		return Result{}, fmt.Errorf("apply config and assets: %w", err)
 	}
 	result.Warnings = append(result.Warnings, assetWarnings...)
 
 	if !req.SkipInstall {
 		w.progressStep(progressStepInstallDeps)
 		if err := w.installDependencies(ctx, info, req.Mode, stdout, stderr); err != nil {
-			return result, err
+			return result, fmt.Errorf("install dependencies: %w", err)
 		}
 		w.progressStep(progressStepInstallRuntime)
 		if err := w.installOpenClaw(ctx, info, req.Mode, mirrors, stdout, stderr); err != nil {
-			return result, err
+			return result, fmt.Errorf("install OpenClaw runtime: %w", err)
 		}
 	}
 
@@ -217,7 +217,7 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 	channelWarnings, err := w.syncChannels(ctx, info, req, previousState, stdout, stderr)
 	result.Warnings = append(result.Warnings, channelWarnings...)
 	if err != nil {
-		return result, err
+		return result, fmt.Errorf("configure channels: %w", err)
 	}
 
 	if !req.SkipVerify {
@@ -225,7 +225,7 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 		verifyWarnings, err := w.verify(ctx, info, req, stdout, stderr)
 		result.Warnings = append(result.Warnings, verifyWarnings...)
 		if err != nil {
-			return result, err
+			return result, fmt.Errorf("verify installation: %w", err)
 		}
 	}
 
@@ -247,26 +247,26 @@ func (w *Workflow) applyConfigAndAssets(ctx context.Context, info system.Info, r
 
 	existingConfig, err := config.LoadMap(info.ConfigPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load existing config %s: %w", info.ConfigPath, err)
 	}
 	managedConfig := config.BuildManagedConfig(input)
 	finalConfig := config.ApplyManagedConfig(existingConfig, managedConfig, previousState)
 
 	w.progressStep(progressStepWriteConfig)
 	if err := config.SaveJSONAtomic(info.ConfigPath, finalConfig); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("save OpenClaw config %s: %w", info.ConfigPath, err)
 	}
 	w.progressDetailf("OpenClaw 配置 -> %s", info.ConfigPath)
 
 	if err := config.SaveJSONAtomic(info.BridgeConfigPath, config.BuildBridgeConfig(input)); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("save Bridge config %s: %w", info.BridgeConfigPath, err)
 	}
 	w.progressDetailf("Bridge 配置 -> %s", info.BridgeConfigPath)
 
 	w.progressStep(progressStepGenerateAssets)
 	assetWarnings, err := w.writeAssets(ctx, info, req, previousState, mirrors, stdout, stderr)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("write runtime assets: %w", err)
 	}
 	warnings = append(warnings, assetWarnings...)
 	w.progressDetailf("运行时文件 -> %s", info.RuntimeDir)
@@ -286,7 +286,7 @@ func (w *Workflow) applyConfigAndAssets(ctx context.Context, info system.Info, r
 
 	w.progressStep(progressStepSaveState)
 	if err := config.SaveInstallState(info.StatePath, state); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("save install state %s: %w", info.StatePath, err)
 	}
 	w.progressDetailf("安装状态 -> %s", info.StatePath)
 
@@ -327,7 +327,10 @@ func (r Request) NormalizeAndValidate(info system.Info) (Request, error) {
 
 func (r Request) Validate(info system.Info) error {
 	_, err := r.NormalizeAndValidate(info)
-	return err
+	if err != nil {
+		return fmt.Errorf("validate request: %w", err)
+	}
+	return nil
 }
 
 func (w *Workflow) installDependencies(ctx context.Context, info system.Info, mode Mode, stdout, stderr io.Writer) error {
@@ -365,7 +368,7 @@ func (w *Workflow) verify(ctx context.Context, info system.Info, req Request, st
 	case ModeDocker:
 		cmd, args, err := composeInvocation()
 		if err != nil {
-			return warnings, err
+			return warnings, fmt.Errorf("invoke compose command: %w", err)
 		}
 		args = append(args, "-f", filepath.Join(info.RuntimeDir, "compose.yaml"), "config")
 		if err := w.runCommand(ctx, cmd, args, nil, info.RuntimeDir, stdout, stderr); err != nil {
@@ -403,36 +406,73 @@ func (w *Workflow) ensureDocker(ctx context.Context, info system.Info, stdout, s
 		return nil
 	}
 
+	var dockerPackages []string
 	switch info.PackageManager {
 	case "apt-get":
-		if err := w.runPrivileged(ctx, info, "apt-get", []string{"update"}, nil, "", stdout, stderr); err != nil {
-			return err
-		}
-		if err := w.runPrivileged(ctx, info, "apt-get", []string{"install", "-y", "docker.io", "docker-compose-plugin"}, nil, "", stdout, stderr); err != nil {
-			return err
-		}
+		dockerPackages = []string{"docker.io", "docker-compose-plugin"}
 	case "dnf":
-		if err := w.runPrivileged(ctx, info, "dnf", []string{"install", "-y", "docker", "docker-compose"}, nil, "", stdout, stderr); err != nil {
-			return err
-		}
+		dockerPackages = []string{"docker", "docker-compose"}
 	case "yum":
-		if err := w.runPrivileged(ctx, info, "yum", []string{"install", "-y", "docker"}, nil, "", stdout, stderr); err != nil {
-			return err
-		}
+		dockerPackages = []string{"docker"}
 	case "brew":
 		if err := w.runCommand(ctx, "brew", []string{"install", "--cask", "docker"}, nil, "", stdout, stderr); err != nil {
-			return err
+			return fmt.Errorf("install docker via brew: %w", err)
 		}
 	case "winget":
 		if err := w.runCommand(ctx, "winget", []string{"install", "-e", "--id", "Docker.DockerDesktop"}, nil, "", stdout, stderr); err != nil {
-			return err
+			return fmt.Errorf("install docker via winget: %w", err)
 		}
 	default:
 		return errors.New("未安装 Docker，且没有可用的包管理器用于自动安装")
 	}
 
+	if info.PackageManager == "apt-get" || info.PackageManager == "dnf" || info.PackageManager == "yum" {
+		if err := w.installPackages(ctx, info, dockerPackages, stdout, stderr); err != nil {
+			return err
+		}
+	}
+
 	if info.OS == "linux" && system.HasCommand("systemctl") {
 		_ = w.runPrivileged(ctx, info, "systemctl", []string{"enable", "--now", "docker"}, nil, "", stdout, stderr)
+	}
+
+	return nil
+}
+
+// installPackages installs the provided packages using the appropriate package manager available in the system
+func (w *Workflow) installPackages(ctx context.Context, info system.Info, packages []string, stdout, stderr io.Writer) error {
+	switch info.PackageManager {
+	case "apt-get":
+		if err := w.runPrivileged(ctx, info, "apt-get", []string{"update"}, nil, "", stdout, stderr); err != nil {
+			return fmt.Errorf("apt-get update: %w", err)
+		}
+		installArgs := append([]string{"install", "-y"}, packages...)
+		if err := w.runPrivileged(ctx, info, "apt-get", installArgs, nil, "", stdout, stderr); err != nil {
+			return fmt.Errorf("install packages %v via apt-get: %w", packages, err)
+		}
+	case "dnf":
+		installArgs := append([]string{"install", "-y"}, packages...)
+		if err := w.runPrivileged(ctx, info, "dnf", installArgs, nil, "", stdout, stderr); err != nil {
+			return fmt.Errorf("install packages %v via dnf: %w", packages, err)
+		}
+	case "yum":
+		installArgs := append([]string{"install", "-y"}, packages...)
+		if err := w.runPrivileged(ctx, info, "yum", installArgs, nil, "", stdout, stderr); err != nil {
+			return fmt.Errorf("install packages %v via yum: %w", packages, err)
+		}
+	case "brew":
+		installArgs := append([]string{"install", "--cask"}, packages...)
+		if err := w.runCommand(ctx, "brew", installArgs, nil, "", stdout, stderr); err != nil {
+			return fmt.Errorf("install packages %v via brew: %w", packages, err)
+		}
+	case "winget":
+		args := []string{"install", "-e", "--id"}
+		args = append(args, packages...)
+		if err := w.runCommand(ctx, "winget", args, nil, "", stdout, stderr); err != nil {
+			return fmt.Errorf("install packages %v via winget: %w", packages, err)
+		}
+	default:
+		return fmt.Errorf("unsupported package manager %s, cannot install packages %v", info.PackageManager, packages)
 	}
 	return nil
 }
@@ -443,32 +483,28 @@ func (w *Workflow) ensureNode(ctx context.Context, info system.Info, stdout, std
 		return nil
 	}
 
+	var nodePackages []string
 	switch info.PackageManager {
 	case "apt-get":
-		if err := w.runPrivileged(ctx, info, "apt-get", []string{"update"}, nil, "", stdout, stderr); err != nil {
-			return err
-		}
-		if err := w.runPrivileged(ctx, info, "apt-get", []string{"install", "-y", "nodejs", "npm"}, nil, "", stdout, stderr); err != nil {
-			return err
-		}
+		nodePackages = []string{"nodejs", "npm"}
 	case "dnf":
-		if err := w.runPrivileged(ctx, info, "dnf", []string{"install", "-y", "nodejs", "npm"}, nil, "", stdout, stderr); err != nil {
-			return err
-		}
+		nodePackages = []string{"nodejs", "npm"}
 	case "yum":
-		if err := w.runPrivileged(ctx, info, "yum", []string{"install", "-y", "nodejs", "npm"}, nil, "", stdout, stderr); err != nil {
-			return err
-		}
+		nodePackages = []string{"nodejs", "npm"}
 	case "brew":
 		if err := w.runCommand(ctx, "brew", []string{"install", "node"}, nil, "", stdout, stderr); err != nil {
-			return err
+			return fmt.Errorf("install node via brew: %w", err)
 		}
 	case "winget":
 		if err := w.runCommand(ctx, "winget", []string{"install", "-e", "--id", "OpenJS.NodeJS.LTS"}, nil, "", stdout, stderr); err != nil {
-			return err
+			return fmt.Errorf("install node via winget: %w", err)
 		}
 	default:
 		return errors.New("未安装 Node.js/npm，且没有可用的包管理器用于自动安装")
+	}
+
+	if info.PackageManager == "apt-get" || info.PackageManager == "dnf" || info.PackageManager == "yum" {
+		return w.installPackages(ctx, info, nodePackages, stdout, stderr)
 	}
 
 	return nil
@@ -477,7 +513,7 @@ func (w *Workflow) ensureNode(ctx context.Context, info system.Info, stdout, std
 func (w *Workflow) installDockerMode(ctx context.Context, info system.Info, stdout, stderr io.Writer) error {
 	cmd, args, err := composeInvocation()
 	if err != nil {
-		return err
+		return fmt.Errorf("get docker compose invocation details: %w", err)
 	}
 	args = append(args, "-f", filepath.Join(info.RuntimeDir, "compose.yaml"), "up", "-d", "--build")
 	return w.runCommand(ctx, cmd, args, nil, info.RuntimeDir, stdout, stderr)
@@ -501,14 +537,14 @@ func (w *Workflow) installNativeMode(ctx context.Context, info system.Info, mirr
 			}
 		}
 
-		var installErr error
+		var lastInstallErr error
 		for idx, candidate := range candidates {
 			registryURL := strings.TrimSpace(candidate.BaseURL)
 			if registryURL == "" {
 				continue
 			}
 			if err := validateHTTPSURL(registryURL); err != nil {
-				installErr = fmt.Errorf("npm 源 %s 无效: %w", mirrorCandidateLabel(candidate), err)
+				lastInstallErr = fmt.Errorf("npm 源 %s 无效: %w", mirrorCandidateLabel(candidate), err)
 				if idx < len(candidates)-1 {
 					w.progressDetailf("跳过无效 npm 源 %s", mirrorCandidateLabel(candidate))
 				}
@@ -520,20 +556,22 @@ func (w *Workflow) installNativeMode(ctx context.Context, info system.Info, mirr
 				"NPM_CONFIG_REGISTRY": registryURL,
 				"npm_config_registry": registryURL,
 			}
-			installErr = w.runCommand(ctx, npmPath, []string{"install", "-g", "openclaw"}, env, "", stdout, stderr)
-			if installErr == nil {
+			instErr := w.runCommand(ctx, npmPath, []string{"install", "-g", "openclaw"}, env, "", stdout, stderr)
+			if instErr == nil {
 				if idx > 0 {
 					w.progressDetailf("切换到 %s 后 npm 安装成功", mirrorCandidateLabel(candidate))
 				}
+				lastInstallErr = nil
 				break
 			}
 
+			lastInstallErr = fmt.Errorf("install openclaw via npm using mirror %s (%s): %w", mirrorCandidateLabel(candidate), candidate.BaseURL, instErr)
 			if idx < len(candidates)-1 {
 				w.progressDetailf("使用 %s 安装失败，继续尝试下一个源", mirrorCandidateLabel(candidate))
 			}
 		}
-		if installErr != nil {
-			return installErr
+		if lastInstallErr != nil {
+			return lastInstallErr
 		}
 
 		openClawPath, err = w.resolveOpenClawExecutable(ctx, info, stderr)
@@ -681,7 +719,7 @@ func channelIDs(channels []config.ChannelSelection) []string { return ChannelIDs
 
 func hasBridgeChannels(channels []config.ChannelSelection) bool {
 	for _, channel := range channels {
-		if usesBridgeProvisioner(channel.Provisioner) {
+		if shared.UsesBridgeProvisioner(channel.Provisioner) {
 			return true
 		}
 	}
@@ -690,7 +728,7 @@ func hasBridgeChannels(channels []config.ChannelSelection) bool {
 
 func hasPluginChannels(channels []config.ChannelSelection) bool {
 	for _, channel := range channels {
-		if !usesBridgeProvisioner(channel.Provisioner) {
+		if !shared.UsesBridgeProvisioner(channel.Provisioner) {
 			return true
 		}
 	}

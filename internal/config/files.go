@@ -19,14 +19,15 @@ func EnsureDir(path string) error {
 }
 
 func BackupIfExists(path, backupDir string, now time.Time) (string, error) {
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return "", nil
-	} else if err != nil {
-		return "", err
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("stat %s: %w", path, err)
 	}
 
 	if err := EnsureDir(backupDir); err != nil {
-		return "", err
+		return "", fmt.Errorf("create backup dir %s: %w", backupDir, err)
 	}
 
 	backupName := fmt.Sprintf("%s.backup.%s", filepath.Base(path), now.Format("20060102_150405"))
@@ -34,10 +35,10 @@ func BackupIfExists(path, backupDir string, now time.Time) (string, error) {
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("read %s for backup: %w", path, err)
 	}
 	if err := os.WriteFile(backupPath, data, 0o600); err != nil {
-		return "", err
+		return "", fmt.Errorf("write backup %s: %w", backupPath, err)
 	}
 	return backupPath, nil
 }
@@ -65,11 +66,11 @@ func LoadMap(path string) (map[string]any, error) {
 func LoadBridgeConfig(path string) (BridgeConfig, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return BridgeConfig{}, err
+		return BridgeConfig{}, fmt.Errorf("read bridge config %s: %w", path, err)
 	}
 	var cfg BridgeConfig
 	if err := json.Unmarshal(content, &cfg); err != nil {
-		return BridgeConfig{}, err
+		return BridgeConfig{}, fmt.Errorf("parse bridge config %s: %w", path, err)
 	}
 	return cfg, nil
 }
@@ -80,29 +81,29 @@ func LoadInstallState(path string) (InstallState, error) {
 		return InstallState{}, nil
 	}
 	if err != nil {
-		return InstallState{}, err
+		return InstallState{}, fmt.Errorf("read install state %s: %w", path, err)
 	}
 	var state InstallState
 	if err := json.Unmarshal(content, &state); err != nil {
-		return InstallState{}, err
+		return InstallState{}, fmt.Errorf("parse install state %s: %w", path, err)
 	}
 	return state, nil
 }
 
 func SaveJSONAtomic(path string, value any) error {
 	if err := EnsureDir(filepath.Dir(path)); err != nil {
-		return err
+		return fmt.Errorf("ensure dir for %s: %w", path, err)
 	}
 
 	content, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal JSON for %s: %w", path, err)
 	}
 	content = append(content, '\n')
 
 	tempFile, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
 	if err != nil {
-		return err
+		return fmt.Errorf("create temp file for %s: %w", path, err)
 	}
 	tempPath := tempFile.Name()
 	defer func() {
@@ -113,17 +114,17 @@ func SaveJSONAtomic(path string, value any) error {
 
 	if _, err := tempFile.Write(content); err != nil {
 		_ = tempFile.Close()
-		return err
+		return fmt.Errorf("write temp file %s: %w", tempPath, err)
 	}
 	if err := tempFile.Sync(); err != nil {
 		_ = tempFile.Close()
-		return err
+		return fmt.Errorf("sync temp file %s: %w", tempPath, err)
 	}
 	if err := tempFile.Close(); err != nil {
-		return err
+		return fmt.Errorf("close temp file %s: %w", tempPath, err)
 	}
 	if err := os.Rename(tempPath, path); err != nil {
-		return err
+		return fmt.Errorf("rename %s to %s: %w", tempPath, path, err)
 	}
 	tempPath = ""
 	return nil
@@ -149,7 +150,7 @@ func BuildManagedConfig(input ManagedConfigInput) map[string]any {
 
 	channels := map[string]any{}
 	for _, channel := range input.Channels {
-		if !usesBridgeProvisioner(channel.Provisioner) {
+		if !shared.UsesBridgeProvisioner(channel.Provisioner) {
 			continue
 		}
 		channels[channel.ID] = map[string]any{
@@ -168,7 +169,7 @@ func BuildManagedConfig(input ManagedConfigInput) map[string]any {
 	// Collect plugin channel IDs for plugins.allow list
 	pluginAllow := []any{}
 	for _, channel := range input.Channels {
-		if !usesBridgeProvisioner(channel.Provisioner) && channel.PluginPackage != "" {
+		if !shared.UsesBridgeProvisioner(channel.Provisioner) && channel.PluginPackage != "" {
 			channelName := shared.ValueOrDefault(channel.OpenClawChannel, channel.Driver)
 			pluginAllow = append(pluginAllow, channelName)
 		}
@@ -403,8 +404,4 @@ func providerCatalogToMaps(models []ProviderModel) []any {
 		out = append(out, entry)
 	}
 	return out
-}
-
-func usesBridgeProvisioner(provisioner string) bool {
-	return shared.ValueOrDefault(provisioner, "bridge") == "bridge"
 }

@@ -41,6 +41,11 @@ func ValueOrDefault(value, fallback string) string {
 	return value
 }
 
+// UsesBridgeProvisioner returns true if the provisioner is "bridge" (after trimming whitespace and defaulting to "bridge").
+func UsesBridgeProvisioner(provisioner string) bool {
+	return ValueOrDefault(strings.TrimSpace(provisioner), "bridge") == "bridge"
+}
+
 func SortedStringKeys[T any](input map[string]T) []string {
 	keys := make([]string, 0, len(input))
 	for key := range input {

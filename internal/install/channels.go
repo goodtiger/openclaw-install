@@ -23,13 +23,13 @@ func (w *Workflow) syncChannels(ctx context.Context, info system.Info, req Reque
 		if slices.Contains(currentIDs, channelID) {
 			continue
 		}
-		if preset, ok := w.Presets.ChannelByID(channelID); ok && !usesBridgeProvisioner(preset.Provisioner) {
+		if preset, ok := w.Presets.ChannelByID(channelID); ok && !shared.UsesBridgeProvisioner(preset.Provisioner) {
 			warnings = append(warnings, fmt.Sprintf("%s 之前是通过 OpenClaw 插件配置的，当前不会自动移除；如有需要请手动删除。", preset.Name))
 		}
 	}
 
 	for _, channel := range req.Channels {
-		if usesBridgeProvisioner(channel.Provisioner) {
+		if shared.UsesBridgeProvisioner(channel.Provisioner) {
 			w.progressDetailf("%s 使用宿主机 bridge 方式配置", channel.Name)
 			continue
 		}
@@ -177,10 +177,6 @@ func (w *Workflow) restartOpenClaw(ctx context.Context, info system.Info, mode M
 	default:
 		return nil
 	}
-}
-
-func usesBridgeProvisioner(provisioner string) bool {
-	return shared.ValueOrDefault(strings.TrimSpace(provisioner), "bridge") == "bridge"
 }
 
 func (w *Workflow) shouldSkipPluginProvisioning(ctx context.Context, info system.Info, mode Mode) bool {

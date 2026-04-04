@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/goodtiger/openclaw-install/internal/bridge"
 	"github.com/goodtiger/openclaw-install/internal/config"
@@ -213,18 +214,35 @@ func printDetectionPreview(out io.Writer, bundle presets.Bundle, info system.Inf
 	fmt.Fprintln(out, "运行 openclaw-install install 以使用这些设置安装。")
 }
 
+type installFlags struct {
+	mode         *string
+	provider     *string
+	baseURL      *string
+	apiKey       *string
+	primaryModel *string
+	fallbacks    *string
+	channels     *string
+	yes          *bool
+	skipVerify   *bool
+}
+
+func addInstallFlags(fs *flag.FlagSet, flagDesc string) *installFlags {
+	return &installFlags{
+		mode:         fs.String("mode", "", "安装模式：docker 或 native"),
+		provider:     fs.String("provider", "", "供应商预设 ID"),
+		baseURL:      fs.String("base-url", "", "供应商 Base URL"),
+		apiKey:       fs.String("api-key", "", "供应商 API Key"),
+		primaryModel: fs.String("primary-model", "", "主模型 ID"),
+		fallbacks:    fs.String("fallback-models", "", "候选模型列表，逗号分隔"),
+		channels:     fs.String("channels", "", "通道 ID 列表，逗号分隔"),
+		yes:          fs.Bool("yes", false, "尽量直接接受默认值"),
+		skipVerify:   fs.Bool("skip-verify", false, flagDesc),
+	}
+}
+
 func runInstall(args []string, in io.Reader, out, errOut io.Writer) error {
 	fs := newFlagSet("install", errOut, "执行交互式安装流程。")
-
-	modeFlag := fs.String("mode", "", "安装模式：docker 或 native")
-	providerFlag := fs.String("provider", "", "供应商预设 ID")
-	baseURLFlag := fs.String("base-url", "", "供应商 Base URL")
-	apiKeyFlag := fs.String("api-key", "", "供应商 API Key")
-	primaryFlag := fs.String("primary-model", "", "主模型 ID")
-	fallbackFlag := fs.String("fallback-models", "", "候选模型列表，逗号分隔")
-	channelsFlag := fs.String("channels", "", "通道 ID 列表，逗号分隔")
-	yesFlag := fs.Bool("yes", false, "尽量直接接受默认值")
-	skipVerifyFlag := fs.Bool("skip-verify", false, "跳过安装后的校验")
+	flags := addInstallFlags(fs, "跳过安装后的校验")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -234,31 +252,22 @@ func runInstall(args []string, in io.Reader, out, errOut io.Writer) error {
 	}
 
 	return runInstallLike(runInstallOptions{
-		mode:         *modeFlag,
-		providerID:   *providerFlag,
-		baseURL:      *baseURLFlag,
-		apiKey:       *apiKeyFlag,
-		primaryModel: *primaryFlag,
-		fallbacks:    *fallbackFlag,
-		channels:     *channelsFlag,
-		yes:          *yesFlag,
-		skipVerify:   *skipVerifyFlag,
+		mode:         *flags.mode,
+		providerID:   *flags.provider,
+		baseURL:      *flags.baseURL,
+		apiKey:       *flags.apiKey,
+		primaryModel: *flags.primaryModel,
+		fallbacks:    *flags.fallbacks,
+		channels:     *flags.channels,
+		yes:          *flags.yes,
+		skipVerify:   *flags.skipVerify,
 		reconfigure:  false,
 	}, in, out, errOut)
 }
 
 func runReconfigure(args []string, in io.Reader, out, errOut io.Writer) error {
 	fs := newFlagSet("reconfigure", errOut, "不重新安装 OpenClaw，仅重写 provider/channel 配置。")
-
-	modeFlag := fs.String("mode", "", "继续使用的安装模式")
-	providerFlag := fs.String("provider", "", "供应商预设 ID")
-	baseURLFlag := fs.String("base-url", "", "供应商 Base URL")
-	apiKeyFlag := fs.String("api-key", "", "供应商 API Key")
-	primaryFlag := fs.String("primary-model", "", "主模型 ID")
-	fallbackFlag := fs.String("fallback-models", "", "候选模型列表，逗号分隔")
-	channelsFlag := fs.String("channels", "", "通道 ID 列表，逗号分隔")
-	yesFlag := fs.Bool("yes", false, "尽量直接接受默认值")
-	skipVerifyFlag := fs.Bool("skip-verify", false, "跳过重写配置后的校验")
+	flags := addInstallFlags(fs, "跳过重写配置后的校验")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -268,15 +277,15 @@ func runReconfigure(args []string, in io.Reader, out, errOut io.Writer) error {
 	}
 
 	return runInstallLike(runInstallOptions{
-		mode:         *modeFlag,
-		providerID:   *providerFlag,
-		baseURL:      *baseURLFlag,
-		apiKey:       *apiKeyFlag,
-		primaryModel: *primaryFlag,
-		fallbacks:    *fallbackFlag,
-		channels:     *channelsFlag,
-		yes:          *yesFlag,
-		skipVerify:   *skipVerifyFlag,
+		mode:         *flags.mode,
+		providerID:   *flags.provider,
+		baseURL:      *flags.baseURL,
+		apiKey:       *flags.apiKey,
+		primaryModel: *flags.primaryModel,
+		fallbacks:    *flags.fallbacks,
+		channels:     *flags.channels,
+		yes:          *flags.yes,
+		skipVerify:   *flags.skipVerify,
 		reconfigure:  true,
 	}, in, out, errOut)
 }
@@ -409,7 +418,7 @@ func printSuccessSummary(out io.Writer, req install.Request, result install.Resu
 	}
 
 	fmt.Fprintln(out, border)
-	fmt.Fprintf(out, "║  %s%s║\n", title, strings.Repeat(" ", 56-len([]rune(title))*2))
+	fmt.Fprintf(out, "║  %s%s║\n", title, strings.Repeat(" ", 56-displayWidth(title)))
 	fmt.Fprintln(out, sep)
 	fmt.Fprintf(out, "║  安装模式：%-47s║\n", req.Mode)
 	fmt.Fprintf(out, "║  供应商：  %-47s║\n", fmt.Sprintf("%s (%s)", req.Provider.Name, req.Provider.ID))
@@ -437,6 +446,22 @@ func printSuccessSummary(out io.Writer, req install.Request, result install.Resu
 			fmt.Fprintf(out, "  - %s\n", warning)
 		}
 	}
+}
+
+// displayWidth calculates the display width of a string for mixed ASCII and CJK characters.
+// This is a simplified algorithm where ASCII characters count as 1 display width and others as 2.
+func displayWidth(s string) int {
+	count := 0
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r >= 0 && r <= 127 {
+			count += 1 // ASCII characters take 1 display width
+		} else {
+			count += 2 // Most CJK and other characters take 2 display width in fixed-width terminals
+		}
+		i += size
+	}
+	return count
 }
 
 func runBridge(args []string, out, errOut io.Writer) error {
@@ -675,7 +700,7 @@ func resolveChannelEnabled(prompter *ui.Prompter, preset presets.ChannelPreset, 
 func collectNetworkConfig(prompter *ui.Prompter, preset presets.ChannelPreset, existing config.BridgeChannelConfig, useFlagSelection, yes bool) (listenAddr, path string, err error) {
 	listenAddr = firstNonEmpty(existing.ListenAddr, preset.DefaultListen)
 	path = firstNonEmpty(existing.Path, preset.DefaultPath)
-	if !usesBridgeProvisioner(preset.Provisioner) || (yes && !useFlagSelection) {
+	if !shared.UsesBridgeProvisioner(preset.Provisioner) || (yes && !useFlagSelection) {
 		return listenAddr, path, nil
 	}
 	listenAddr, err = prompter.AskString(preset.Name+" 监听地址", listenAddr, false)
@@ -850,10 +875,6 @@ func normalizedProvisioner(value string) string {
 	return value
 }
 
-func usesBridgeProvisioner(provisioner string) bool {
-	return normalizedProvisioner(provisioner) == "bridge"
-}
-
 func boolLabel(value bool) string {
 	if value {
 		return "已检测"
@@ -867,4 +888,21 @@ func envOrEmpty(key string) string {
 		return ""
 	}
 	return strings.TrimSpace(os.Getenv(key))
+}
+
+func runUpgrade(args []string, out, errOut io.Writer) error {
+	fs := newFlagSet("upgrade", errOut, "自我更新到最新版本。")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+
+	// TODO: Implementation of upgrade functionality would go here
+	// Since this is an installer for OpenClaw, the upgrade functionality
+	// should probably update itself by downloading the new binary
+
+	fmt.Fprintln(out, "升级功能未实现")
+	return nil
 }
