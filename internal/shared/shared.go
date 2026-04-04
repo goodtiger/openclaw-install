@@ -34,6 +34,17 @@ func MaskSecret(value string) string {
 	return "****" + value[len(value)-4:]
 }
 
+// FirstNonEmpty returns the first non-empty (after trimming whitespace) string from a variadic list.
+// Returns empty string if all values are empty.
+func FirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func ValueOrDefault(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback

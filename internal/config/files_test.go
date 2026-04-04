@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -311,7 +312,7 @@ func TestBackupIfExists(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			path := tt.setupState(dir)
-			
+
 			backupDir := filepath.Join(dir, "backups")
 			backup, err := BackupIfExists(path, backupDir, time.Now())
 
@@ -325,7 +326,7 @@ func TestBackupIfExists(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			
+
 			// Check the result against expectation
 			if tt.expectedResult == "" {
 				if backup != "" {
@@ -335,44 +336,44 @@ func TestBackupIfExists(t *testing.T) {
 				if backup == "" {
 					t.Fatal("expected non-empty backup path, got empty")
 				}
-				
-				// Verify backup content matches original 
+
+				// Verify backup content matches original
 				originalContent, readErr := os.ReadFile(path)
 				if readErr != nil {
 					t.Fatal(readErr)
 				}
-				
+
 				backupContent, readErr := os.ReadFile(backup)
 				if readErr != nil {
 					t.Fatal(readErr)
 				}
-				
+
 				if string(originalContent) != string(backupContent) {
 					t.Fatalf("backup content differs from original: %s vs %s", string(originalContent), string(backupContent))
 				}
 			}
 		})
 	}
-	
+
 	// Additional test for stat error case - create a protected directory with no permissions
 	t.Run("stat error", func(t *testing.T) {
 		// Create the main directory
 		dir := t.TempDir()
-		
+
 		// Create a protected child directory with no permissions
 		protectedDir := filepath.Join(dir, "protected")
 		err := os.Mkdir(protectedDir, 0000) // No permissions - read/writable by user only
 		if err != nil {
 			t.Fatal(err)
 		}
-		
+
 		// Try to operate on a file inside the protected directory
-		protectedFilePath := filepath.Join(protectedDir, "config.json") 
+		protectedFilePath := filepath.Join(protectedDir, "config.json")
 		backupDir := filepath.Join(dir, "backups")
-		
+
 		// Try to back up this file - should fail at Stat
 		_, err = BackupIfExists(protectedFilePath, backupDir, time.Now())
-		
+
 		if err == nil {
 			t.Fatal("expected error for stat but got none")
 		}
@@ -381,17 +382,17 @@ func TestBackupIfExists(t *testing.T) {
 
 func TestLoadMap(t *testing.T) {
 	tests := []struct {
-		name            string
-		setupFile       func(dir string) string
-		expectErr       bool
-		expectedMap     map[string]any
+		name        string
+		setupFile   func(dir string) string
+		expectErr   bool
+		expectedMap map[string]any
 	}{
 		{
 			name: "file doesn't exist",
 			setupFile: func(dir string) string {
 				return filepath.Join(dir, "nonexistent.json")
 			},
-			expectErr: false,
+			expectErr:   false,
 			expectedMap: map[string]any{},
 		},
 		{
@@ -404,7 +405,7 @@ func TestLoadMap(t *testing.T) {
 				}
 				return path
 			},
-			expectErr: false,
+			expectErr:   false,
 			expectedMap: map[string]any{},
 		},
 		{
@@ -417,7 +418,7 @@ func TestLoadMap(t *testing.T) {
 				}
 				return path
 			},
-			expectErr: false,
+			expectErr:   false,
 			expectedMap: map[string]any{},
 		},
 		{
@@ -446,7 +447,7 @@ func TestLoadMap(t *testing.T) {
 				}
 				return path
 			},
-			expectErr: true,
+			expectErr:   true,
 			expectedMap: nil,
 		},
 	}
@@ -455,20 +456,20 @@ func TestLoadMap(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			path := tt.setupFile(dir)
-			
+
 			resultMap, err := LoadMap(path)
-			
+
 			if tt.expectErr {
 				if err == nil {
 					t.Fatal("expected error but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			
+
 			if !reflect.DeepEqual(resultMap, tt.expectedMap) {
 				t.Fatalf("expected map %+v, got %+v", tt.expectedMap, resultMap)
 			}
@@ -478,10 +479,10 @@ func TestLoadMap(t *testing.T) {
 
 func TestLoadBridgeConfig(t *testing.T) {
 	tests := []struct {
-		name          string
-		setupFile     func(dir string) string
-		expectErr     bool
-		validator     func(cfg BridgeConfig) bool
+		name      string
+		setupFile func(dir string) string
+		expectErr bool
+		validator func(cfg BridgeConfig) bool
 	}{
 		{
 			name: "file doesn't exist",
@@ -523,7 +524,7 @@ func TestLoadBridgeConfig(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				
+
 				path := filepath.Join(dir, "valid.json")
 				err = os.WriteFile(path, content, 0644)
 				if err != nil {
@@ -534,10 +535,10 @@ func TestLoadBridgeConfig(t *testing.T) {
 			expectErr: false,
 			validator: func(cfg BridgeConfig) bool {
 				return cfg.Version == 1 &&
-				       cfg.SystemPrompt != "" && 
-				       cfg.TimeoutSeconds == 30 &&
-				       cfg.Provider.ID == "test" &&
-				       len(cfg.Channels) == 1
+					cfg.SystemPrompt != "" &&
+					cfg.TimeoutSeconds == 30 &&
+					cfg.Provider.ID == "test" &&
+					len(cfg.Channels) == 1
 			},
 		},
 		{
@@ -559,20 +560,20 @@ func TestLoadBridgeConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			path := tt.setupFile(dir)
-			
+
 			resultCfg, err := LoadBridgeConfig(path)
-			
+
 			if tt.expectErr {
 				if err == nil {
 					t.Fatal("expected error but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			
+
 			if !tt.validator(resultCfg) {
 				t.Fatalf("unexpected config: %+v", resultCfg)
 			}
@@ -582,9 +583,9 @@ func TestLoadBridgeConfig(t *testing.T) {
 
 func TestLoadInstallState(t *testing.T) {
 	tests := []struct {
-		name          string
-		setupFile     func(dir string) string
-		expectErr     bool
+		name           string
+		setupFile      func(dir string) string
+		expectErr      bool
 		validateResult func(state InstallState) bool
 	}{
 		{
@@ -612,7 +613,7 @@ func TestLoadInstallState(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				
+
 				path := filepath.Join(dir, "valid.json")
 				err = os.WriteFile(path, content, 0644)
 				if err != nil {
@@ -623,10 +624,10 @@ func TestLoadInstallState(t *testing.T) {
 			expectErr: false,
 			validateResult: func(state InstallState) bool {
 				return state.Version == "1.0.0" &&
-				       state.Mode == "native" &&
-				       state.Platform == "linux" &&
-				       state.ManagedProviderID == "test-provider" &&
-				       reflect.DeepEqual(state.ManagedChannels, []string{"ch1", "ch2"})
+					state.Mode == "native" &&
+					state.Platform == "linux" &&
+					state.ManagedProviderID == "test-provider" &&
+					reflect.DeepEqual(state.ManagedChannels, []string{"ch1", "ch2"})
 			},
 		},
 		{
@@ -639,7 +640,7 @@ func TestLoadInstallState(t *testing.T) {
 				}
 				return path
 			},
-			expectErr: true,
+			expectErr:      true,
 			validateResult: nil,
 		},
 	}
@@ -648,20 +649,20 @@ func TestLoadInstallState(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			path := tt.setupFile(dir)
-			
+
 			resultState, err := LoadInstallState(path)
-			
+
 			if tt.expectErr {
 				if err == nil {
 					t.Fatal("expected error but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			
+
 			if !tt.validateResult(resultState) {
 				t.Fatalf("loaded state does not match expected: expected validation failure")
 			}
@@ -673,7 +674,7 @@ func TestSaveInstallState(t *testing.T) {
 	t.Run("saves state to file correctly", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "install-state.json")
-		
+
 		state := InstallState{
 			Version:           "1.0.0",
 			InstalledAt:       time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -682,21 +683,21 @@ func TestSaveInstallState(t *testing.T) {
 			ManagedProviderID: "test-provider",
 			ManagedChannels:   []string{"ch1", "ch2"},
 		}
-		
+
 		err := SaveInstallState(path, state)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		
-		if _, err := os.Stat(path); os.IsNotExist(err) {
+
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 			t.Fatal("saved file does not exist")
 		}
-		
+
 		loadedState, err := LoadInstallState(path)
 		if err != nil {
 			t.Fatalf("failed to load saved state: %v", err)
 		}
-		
+
 		if loadedState.Version != state.Version ||
 			loadedState.Mode != state.Mode ||
 			loadedState.Platform != state.Platform ||
@@ -720,70 +721,70 @@ func TestBuildBridgeConfig(t *testing.T) {
 			},
 			Channels: []ChannelSelection{
 				{
-					ID:         "test-channel",
-					Name:       "Test Channel",
-					Driver:     "webhook",
+					ID:          "test-channel",
+					Name:        "Test Channel",
+					Driver:      "webhook",
 					Provisioner: "bridge",
-					ListenAddr: "127.0.0.1:8080",
-					Path:       "/webhook",
+					ListenAddr:  "127.0.0.1:8080",
+					Path:        "/webhook",
 					Fields: map[string]string{
 						"key": "value",
 					},
 				},
 			},
 		}
-		
+
 		result := BuildBridgeConfig(input)
-		
+
 		if result.Version != 1 {
 			t.Errorf("expected version 1, got %d", result.Version)
 		}
-		
+
 		if result.SystemPrompt == "" {
 			t.Error("expected system prompt to be set")
 		}
-		
+
 		if result.TimeoutSeconds != 30 {
 			t.Errorf("expected timeout 30, got %d", result.TimeoutSeconds)
 		}
-		
+
 		if result.Provider.ID != "test" {
 			t.Errorf("expected provider ID 'test', got '%s'", result.Provider.ID)
 		}
-		
+
 		if len(result.Channels) != 1 {
 			t.Fatalf("expected 1 channel, got %d", len(result.Channels))
 		}
-		
+
 		channel, exists := result.Channels["test-channel"]
 		if !exists {
 			t.Fatal("expected test-channel to exist in bridge config")
 		}
-		
+
 		if !channel.Enabled {
 			t.Error("expected channel to be enabled")
 		}
-		
+
 		if channel.Driver != "webhook" {
 			t.Errorf("expected driver 'webhook', got '%s'", channel.Driver)
 		}
-		
+
 		if channel.Provisioner != "bridge" {
 			t.Errorf("expected provisioner 'bridge', got '%s'", channel.Provisioner)
 		}
-		
+
 		if channel.ListenAddr != "127.0.0.1:8080" {
 			t.Errorf("expected listen address '127.0.0.1:8080', got '%s'", channel.ListenAddr)
 		}
-		
+
 		if channel.Path != "/webhook" {
 			t.Errorf("expected path '/webhook', got '%s'", channel.Path)
 		}
-		
+
 		if len(channel.Fields) != 1 {
 			t.Errorf("expected 1 field, got %d", len(channel.Fields))
 		}
-		
+
 		if value, exists := channel.Fields["key"]; !exists || value != "value" {
 			t.Errorf("expected field 'key' to have value 'value', got '%s'", value)
 		}
@@ -792,11 +793,11 @@ func TestBuildBridgeConfig(t *testing.T) {
 
 func TestBridgeURL(t *testing.T) {
 	tests := []struct {
-		name         string
-		bridgeHost   string
-		listenAddr   string
-		path         string
-		expectedURL  string
+		name        string
+		bridgeHost  string
+		listenAddr  string
+		path        string
+		expectedURL string
 	}{
 		{
 			name:        "valid host:port with path",
@@ -838,7 +839,7 @@ func TestBridgeURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := bridgeURL(tt.bridgeHost, tt.listenAddr, tt.path)
-			
+
 			if result != tt.expectedURL {
 				t.Errorf("expected %s, got %s", tt.expectedURL, result)
 			}
@@ -848,10 +849,10 @@ func TestBridgeURL(t *testing.T) {
 
 func TestJoinModelID(t *testing.T) {
 	tests := []struct {
-		name          string
-		providerID    string
-		model         string
-		expected      string
+		name       string
+		providerID string
+		model      string
+		expected   string
 	}{
 		{
 			name:       "normal case",
@@ -882,7 +883,7 @@ func TestJoinModelID(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := joinModelID(tt.providerID, tt.model)
-			
+
 			if result != tt.expected {
 				t.Errorf("expected %s, got %s", tt.expected, result)
 			}
@@ -916,8 +917,8 @@ func TestCloneStringMap(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := cloneStringMap(tt.input)
-			
-			if tt.expected == nil { 
+
+			if tt.expected == nil {
 				if result != nil {
 					t.Errorf("expected nil, got %v", result)
 				}

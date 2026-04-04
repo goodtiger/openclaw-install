@@ -147,7 +147,7 @@ func (w *Workflow) Doctor(ctx context.Context, info system.Info) (DoctorReport, 
 }
 
 func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, stdout, stderr io.Writer) (Result, error) {
-	normalizedReq, err := req.NormalizeAndValidate(info)
+	normalizedReq, err := req.Normalize(info)
 	if err != nil {
 		return Result{}, fmt.Errorf("normalize request: %w", err)
 	}
@@ -299,7 +299,9 @@ func (w *Workflow) Reconfigure(ctx context.Context, info system.Info, req Reques
 	return w.Install(ctx, info, reconfigReq, stdout, stderr)
 }
 
-func (r Request) NormalizeAndValidate(info system.Info) (Request, error) {
+// Normalize validates and normalizes the request, returning a copy with default
+// values filled in. It may modify Provider.Type and Mode if they are empty.
+func (r Request) Normalize(info system.Info) (Request, error) {
 	normalized := r
 	if normalized.Mode == "" {
 		normalized.Mode = recommendedMode(info)
@@ -325,10 +327,24 @@ func (r Request) NormalizeAndValidate(info system.Info) (Request, error) {
 	return normalized, nil
 }
 
+// Validate checks that all required fields are populated without modifying
+// the receiver. Use this when you need to validate a request without applying
+// default values or making any changes.
 func (r Request) Validate(info system.Info) error {
-	_, err := r.NormalizeAndValidate(info)
-	if err != nil {
-		return fmt.Errorf("validate request: %w", err)
+	if r.AppVersion == "" {
+		return errors.New("缺少安装器版本号")
+	}
+	if strings.TrimSpace(r.Provider.ID) == "" {
+		return errors.New("缺少供应商 ID")
+	}
+	if strings.TrimSpace(r.Provider.Name) == "" {
+		return errors.New("缺少供应商名称")
+	}
+	if strings.TrimSpace(r.Provider.BaseURL) == "" {
+		return errors.New("缺少供应商 Base URL")
+	}
+	if strings.TrimSpace(r.Provider.PrimaryModel) == "" {
+		return errors.New("缺少主模型")
 	}
 	return nil
 }

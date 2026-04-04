@@ -125,6 +125,34 @@ func TestUsesBridgeProvisioner(t *testing.T) {
 	}
 }
 
+func TestFirstNonEmpty(t *testing.T) {
+	tests := []struct {
+		name     string
+		inputs   []string
+		expected string
+	}{
+		{"empty inputs", []string{}, ""},
+		{"all empty", []string{"", "", ""}, ""},
+		{"all whitespace", []string{"   ", "\t", "\n"}, ""},
+		{"first non-empty", []string{"first", "second", "third"}, "first"},
+		{"first empty, second non-empty", []string{"", "second", "third"}, "second"},
+		{"first two empty, third non-empty", []string{"", "", "third"}, "third"},
+		{"with whitespace around value", []string{"   ", "\t", " value "}, " value "},
+		{"mixed whitespace and values", []string{"   ", "\t\n", "actual"}, "actual"},
+		{"single value", []string{"only"}, "only"},
+		{"single empty", []string{""}, ""},
+		{"single whitespace", []string{"   "}, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FirstNonEmpty(tt.inputs...); got != tt.expected {
+				t.Errorf("FirstNonEmpty(%v) = %q, want %q", tt.inputs, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestSortedStringKeys(t *testing.T) {
 	intMap := map[string]int{
 		"apple":  1,

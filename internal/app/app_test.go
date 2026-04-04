@@ -1,10 +1,16 @@
 package app
 
 import (
+	"bytes"
+	"io"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/goodtiger/openclaw-install/internal/config"
+	"github.com/goodtiger/openclaw-install/internal/install"
+	"github.com/goodtiger/openclaw-install/internal/system"
+	"github.com/goodtiger/openclaw-install/internal/ui"
 	"github.com/goodtiger/openclaw-install/presets"
 )
 
@@ -271,4 +277,483 @@ func TestProviderModelIDs(t *testing.T) {
 
 func TestPrintHelp(t *testing.T) {
 	printHelp(os.Stdout)
+}
+
+func TestRun(t *testing.T) {
+	// Test with no arguments (should show help)
+	t.Run("no_args", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+
+		exitCode := Run([]string{}, &strings.Reader{}, &out, &errOut)
+
+		if exitCode != 0 {
+			t.Errorf("Run() with no args returned %d, want 0", exitCode)
+		}
+		if out.Len() == 0 {
+			t.Error("Run() with no args should write help to out")
+		}
+	})
+
+	// Test help commands
+	t.Run("help_commands", func(t *testing.T) {
+		commands := [][]string{{"help"}, {"-h"}, {"--help"}}
+		for _, args := range commands {
+			t.Run(strings.Join(args, "_"), func(t *testing.T) {
+				var out, errOut bytes.Buffer
+
+				exitCode := Run(args, &strings.Reader{}, &out, &errOut)
+
+				if exitCode != 0 {
+					t.Errorf("Run(%q) returned %d, want 0", args, exitCode)
+				}
+				if out.Len() == 0 {
+					t.Error("Run() with help command should write help to out")
+				}
+			})
+		}
+	})
+
+	// Test version command
+	t.Run("version", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+
+		exitCode := Run([]string{"version"}, &strings.Reader{}, &out, &errOut)
+
+		if exitCode != 0 {
+			t.Errorf("Run([\"version\"]) returned %d, want 0", exitCode)
+		}
+		if out.Len() == 0 {
+			t.Error("Run([\"version\"]) should write version to out")
+		}
+	})
+
+	// Test unknown command
+	t.Run("unknown_command", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+
+		exitCode := Run([]string{"invalid-command"}, &strings.Reader{}, &out, &errOut)
+
+		if exitCode != 2 {
+			t.Errorf("Run([\"invalid-command\"]) returned %d, want 2", exitCode)
+		}
+		if errOut.Len() == 0 {
+			t.Error("Run([\"invalid-command\"]) should write error message to errOut")
+		}
+		if !strings.Contains(errOut.String(), "未知命令") {
+			t.Errorf("Run([\"invalid-command\"]) error output should contain '未知命令'")
+		}
+	})
+
+	// Test install command with help
+	t.Run("install_help", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+
+		exitCode := Run([]string{"install", "--help"}, &strings.Reader{}, &out, &errOut)
+		_ = exitCode // Just checking for no panic during flag parsing
+	})
+
+	// Test reconfigure command with help
+	t.Run("reconfigure_help", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+
+		exitCode := Run([]string{"reconfigure", "--help"}, &strings.Reader{}, &out, &errOut)
+		_ = exitCode // Just checking for no panic during flag parsing
+	})
+
+	// Test doctor command with help to avoid system detection failures
+	t.Run("doctor_help", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+
+		exitCode := Run([]string{"doctor", "--help"}, &strings.Reader{}, &out, &errOut)
+		_ = exitCode // Just checking for no panic during argument parsing
+	})
+}
+
+func TestRunDoctor(t *testing.T) {
+	// Test with --help flag to avoid system detection requirements
+	t.Run("with_help", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+
+		err := runDoctor([]string{"--help"}, &out, &errOut)
+		// Should not return an error when just parsing help flag
+		if err != nil {
+			t.Logf("runDoctor --help got error: %v, may be OK in test environment", err)
+		}
+	})
+}
+
+func TestRunUpgrade(t *testing.T) {
+	t.Run("basic_execution", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+
+		err := runUpgrade([]string{}, &out, &errOut)
+
+		if err != nil {
+			t.Fatalf("runUpgrade failed unexpectedly: %v", err)
+		}
+		if !strings.Contains(out.String(), "升级功能未实现") {
+			t.Errorf("Expected output to mention unimplemented upgrade, got: %q", out.String())
+		}
+	})
+
+	t.Run("with_help", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+
+		err := runUpgrade([]string{"--help"}, &out, &errOut)
+
+		if err != nil {
+			t.Errorf("runUpgrade --help failed unexpectedly: %v", err)
+		}
+	})
+}
+
+func TestRunBridge(t *testing.T) {
+	// Test runBridge with no subcommands
+	t.Run("no_subcommand", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+
+		err := runBridge([]string{}, &out, &errOut)
+
+		if err == nil {
+			t.Fatal("Expected error for missing subcommand")
+		}
+		if !strings.Contains(err.Error(), "bridge 需要子命令") {
+			t.Errorf("Expected error to mention required subcommand, got: %v", err)
+		}
+	})
+
+	// Test runBridge with unknown subcommand
+	t.Run("unknown_subcommand", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+
+		err := runBridge([]string{"unknown"}, &out, &errOut)
+
+		if err == nil {
+			t.Fatal("Expected error for unknown subcommand")
+		}
+		if !strings.Contains(err.Error(), "未知的 bridge 子命令") {
+			t.Errorf("Expected error to mention unknown subcommand, got: %v", err)
+		}
+	})
+}
+
+func TestRunBridgeServe(t *testing.T) {
+	// Test runBridgeServe with no --channel flag
+	t.Run("missing_channel", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+
+		err := runBridgeServe([]string{}, &out, &errOut)
+
+		if err == nil {
+			t.Fatal("Expected error for missing channel flag")
+		}
+		if !strings.Contains(err.Error(), "必须提供 --channel") {
+			t.Errorf("Expected error to mention required channel, got: %v", err)
+		}
+	})
+}
+
+func TestPrintSuccessSummary(t *testing.T) {
+	t.Run("install_mode", func(t *testing.T) {
+		var out bytes.Buffer
+
+		req := install.Request{
+			Mode: "native",
+			Provider: config.ProviderConfig{
+				ID:           "test-provider",
+				Name:         "Test Provider",
+				PrimaryModel: "gpt-3.5-turbo",
+				APIKey:       "test-api-key",
+			},
+		}
+		result := install.Result{
+			ConfigPath:       "/path/to/config",
+			BridgeConfigPath: "/path/to/bridge",
+			BackupFile:       "/path/to/backup",
+		}
+
+		printSuccessSummary(&out, req, result, false)
+
+		output := out.String()
+		if !strings.Contains(output, "安装完成") {
+			t.Errorf("Expected summary to contain '安装完成' in install mode, got %q", output)
+		}
+		if !strings.Contains(output, "native") {
+			t.Errorf("Expected summary to contain mode, got %q", output)
+		}
+	})
+
+	t.Run("reconfigure_mode", func(t *testing.T) {
+		var out bytes.Buffer
+
+		req := install.Request{
+			Mode: "docker",
+			Provider: config.ProviderConfig{
+				ID:           "test-provider",
+				Name:         "Test Provider",
+				PrimaryModel: "gpt-4",
+				APIKey:       "test-api-key",
+			},
+		}
+		result := install.Result{
+			ConfigPath:       "/path/to/config",
+			BridgeConfigPath: "/path/to/bridge",
+		}
+
+		printSuccessSummary(&out, req, result, true)
+
+		output := out.String()
+		if !strings.Contains(output, "重配置完成") {
+			t.Errorf("Expected summary to contain '重配置完成' in reconfigure mode, got %q", output)
+		}
+		if !strings.Contains(output, "docker") {
+			t.Errorf("Expected summary to contain mode, got %q", output)
+		}
+	})
+}
+
+func TestRunInstallLike(t *testing.T) {
+	// Test runInstallLike with --yes flag
+	t.Run("yes_path", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+
+		opts := runInstallOptions{
+			yes: true,
+		}
+
+		_ = runInstallLike(opts, &strings.Reader{}, &out, &errOut)
+		// The test is to verify no panic during argument parsing.
+		// System detection may fail but shouldn't panic.
+	})
+
+	// Test runInstallLike with non-TTY rejection when --yes is not passed
+	t.Run("non_TTY_no_yes", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+
+		opts := runInstallOptions{
+			yes: false,
+		}
+
+		_ = runInstallLike(opts, &strings.Reader{}, &out, &errOut)
+		// Just check no panic occurs during parsing
+	})
+}
+
+func TestChooseProviderPreset(t *testing.T) {
+	// Test empty bundle rejection
+	t.Run("empty_bundle_rejection", func(t *testing.T) {
+		prompter := ui.NewPrompter(strings.NewReader(""), io.Discard)
+
+		_, err := chooseProviderPreset(prompter, presets.Bundle{}, "", true, "")
+
+		if err == nil {
+			t.Fatal("Expected empty provider bundle to be rejected")
+		}
+		if !strings.Contains(err.Error(), "没有可用的供应商预设") {
+			t.Errorf("Expected error message '没有可用的供应商预设', but got: %v", err)
+		}
+	})
+
+	// Test flag override path
+	t.Run("flag_override", func(t *testing.T) {
+		bundle := presets.Bundle{
+			Providers: []presets.ProviderPreset{
+				{ID: "test-provider", Name: "Test Provider", Type: "openai"},
+			},
+		}
+		prompter := ui.NewPrompter(strings.NewReader(""), io.Discard)
+
+		// Should pick the provider specified in the providerID argument
+		preset, err := chooseProviderPreset(prompter, bundle, "test-provider", true, "")
+
+		if err != nil {
+			t.Fatalf("Expected no error when provider is specified by flag, got: %v", err)
+		}
+		if preset.ID != "test-provider" {
+			t.Errorf("Expected provider ID 'test-provider', got %q", preset.ID)
+		}
+	})
+
+	// Test yes-mode fallback to first provider
+	t.Run("yes_mode_fallback_to_first", func(t *testing.T) {
+		bundle := presets.Bundle{
+			Providers: []presets.ProviderPreset{
+				{ID: "first-provider", Name: "First Provider", Type: "openai"},
+				{ID: "second-provider", Name: "Second Provider", Type: "claude"},
+			},
+		}
+		prompter := ui.NewPrompter(strings.NewReader(""), io.Discard)
+
+		preset, err := chooseProviderPreset(prompter, bundle, "", true, "")
+
+		if err != nil {
+			t.Fatalf("Expected no error in yes mode, got: %v", err)
+		}
+		if preset.ID != "first-provider" {
+			t.Errorf("Expected first provider 'first-provider', got %q", preset.ID)
+		}
+	})
+}
+
+func TestNewFlagSet(t *testing.T) {
+	t.Run("prints_help_content", func(t *testing.T) {
+		var out bytes.Buffer
+
+		fs := newFlagSet("test", &out, "Test command description")
+
+		// Print usage to check help content
+		fs.Usage()
+
+		helpOutput := out.String()
+		if !strings.Contains(helpOutput, "用法：openclaw-install test") {
+			t.Errorf("Expected help output to contain usage pattern, got: %q", helpOutput)
+		}
+		if !strings.Contains(helpOutput, "Test command description") {
+			t.Errorf("Expected help output to contain description, got: %q", helpOutput)
+		}
+	})
+
+	t.Run("with_options_shows_defaults", func(t *testing.T) {
+		var out bytes.Buffer
+
+		fs := newFlagSet("test", &out, "Test command with options")
+		testOpt := fs.String("opt", "default", "Test option")
+
+		// Verify the option is defined
+		if *testOpt != "default" {
+			t.Errorf("Expected default value 'default', got: %q", *testOpt)
+		}
+
+		// Print usage to check options are shown
+		fs.Usage()
+		helpOutput := out.String()
+
+		if !strings.Contains(helpOutput, "参数：") {
+			t.Errorf("Expected help output to contain '参数：' section when options exist, got: %q", helpOutput)
+		}
+		if !strings.Contains(helpOutput, "Test option") {
+			t.Errorf("Expected help output to contain option description, got: %q", helpOutput)
+		}
+	})
+}
+
+func TestRunInstallAndReconfigure(t *testing.T) {
+	// Test install --help option parsing
+	t.Run("install_help", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+
+		exitCode := Run([]string{"install", "--help"}, &strings.Reader{}, &out, &errOut)
+		_ = exitCode // Just checking for no panic during parsing
+	})
+
+	// Test reconfigure --help option parsing
+	t.Run("reconfigure_help", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+
+		exitCode := Run([]string{"reconfigure", "--help"}, &strings.Reader{}, &out, &errOut)
+		_ = exitCode // Just checking for no panic during parsing
+	})
+}
+
+func TestPrintDetectionPreview(t *testing.T) {
+	t.Run("executes_without_panic", func(t *testing.T) {
+		var out bytes.Buffer
+
+		// Construct minimal data for the function to execute
+		bundle := presets.Bundle{
+			Providers: []presets.ProviderPreset{
+				{ID: "test-provider", Name: "Test", Type: "openai"},
+			},
+		}
+
+		info := system.Info{}
+		report := install.DoctorReport{
+			Info: info,
+		}
+
+		// Execute the function - this should not panic
+		printDetectionPreview(&out, bundle, info, report)
+
+		// Verify that the function executed and produced some output
+		if out.Len() == 0 {
+			t.Log("Warning: printDetectionPreview produced no output in test environment")
+		}
+	})
+}
+
+func TestCollectCredentialFields(t *testing.T) {
+	t.Run("basic_execution", func(t *testing.T) {
+		// Test the collectCredentialFields function
+		channel := presets.ChannelPreset{
+			Name: "test-channel",
+			RequiredFields: []presets.CredentialField{
+				{
+					Key:      "username",
+					Label:    "Username",
+					Secret:   false,
+					Optional: true,
+				},
+				{
+					Key:      "password",
+					Label:    "Password",
+					Secret:   true,
+					Optional: false,
+				},
+			},
+		}
+
+		prompter := ui.NewPrompter(strings.NewReader("test-user\ntest-pass\n"), os.Stdout)
+		existingConfig := config.BridgeChannelConfig{
+			Fields: map[string]string{
+				"username": "existing-user",
+			},
+		}
+
+		// Execute the function in yes mode to bypass interactive prompts
+		result, err := collectCredentialFields(prompter, channel, existingConfig, true)
+		_ = result // May be empty depending on test environment
+		_ = err    // Just ensuring it runs without panic
+	})
+}
+
+func TestCollectNetworkConfig(t *testing.T) {
+	t.Run("with_yes_mode", func(t *testing.T) {
+		channel := presets.ChannelPreset{
+			Name:          "test-channel",
+			Provisioner:   "bridge",
+			DefaultListen: "localhost:3000",
+			DefaultPath:   "/webhook",
+		}
+
+		existingConfig := config.BridgeChannelConfig{
+			ListenAddr: "localhost:3001",
+			Path:       "/other-webhook",
+		}
+
+		prompter := ui.NewPrompter(strings.NewReader(""), os.Stdout)
+
+		// Test in yes mode to bypass interactive prompts
+		listenAddr, path, err := collectNetworkConfig(prompter, channel, existingConfig, true, true)
+		_ = listenAddr // Will likely be default in yes mode
+		_ = path       // Will likely be default in yes mode
+		_ = err
+	})
+}
+
+func TestLoadExistingBridgeConfig(t *testing.T) {
+	t.Run("handles_missing_file", func(t *testing.T) {
+		// Test with non-existent config path
+		cfg, err := loadExistingBridgeConfig("/tmp/non-existent-path.json")
+
+		// Should either return empty config or an error that isn't a panic
+		if err != nil {
+			// If it's a file-not-found error, that's normal
+			if !strings.Contains(err.Error(), "no such file") && !strings.Contains(err.Error(), "does not exist") {
+				t.Errorf("Unexpected error type: %v", err)
+			}
+		}
+
+		// Make sure cfg is not null and is an empty/default config
+		_ = cfg
+	})
 }

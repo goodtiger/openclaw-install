@@ -826,13 +826,11 @@ func flagSetHasOptions(fs *flag.FlagSet) bool {
 	return hasOptions
 }
 
+// firstNonEmpty returns the first non-empty (after trimming whitespace) string from a variadic list.
+// This delegates to shared.FirstNonEmpty which provides the same variadic behavior.
+// Kept in app.go for local use; consider using shared.FirstNonEmpty directly if needed elsewhere.
 func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
+	return shared.FirstNonEmpty(values...)
 }
 
 func providerModelIDs(preset presets.ProviderPreset, catalog []config.ProviderModel) []string {
