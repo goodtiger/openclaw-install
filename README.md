@@ -9,6 +9,10 @@
 - 预置国内常见 LLM 供应商配置
 - 默认提供微信（个人微信 ClawBot 插件）接入，并保留 QQ、飞书、企业微信等 channel 接入
 - 为 bridge 生成本地启动脚本，并在 Linux/macOS 尝试注册后台服务
+- **v0.1.9 新增**：`upgrade` 命令自动升级安装器
+- **v0.1.9 新增**：`channels list` 查看所有可用通道
+- **v0.1.9 新增**：`providers list` 查看所有供应商预设
+- **v0.1.9 新增**：`validate` 验证配置文件有效性
 
 当前实现已经可以编译、运行、生成配置和 bridge 资产，但仍属于 v1，重点是先把安装链路打通。
 
@@ -151,181 +155,152 @@ scripts/build-release.sh linux/amd64 darwin/arm64 windows/amd64
 - 当前镜像探测结果
   - 可能的 warning
 
-镜像选择现在默认按“国内优先、官方回退”处理，例如 npm 会优先尝试 `npmmirror`，Go 会优先尝试 `goproxy.cn`。
+镜像选择现在默认按"国内优先、官方回退"处理，例如 npm 会优先尝试 `npmmirror`，Go 会优先尝试 `goproxy.cn`。
 
 如果你在受限网络或沙箱里运行，`doctor` 可能会提示镜像探测失败并回退到默认源。这不是致命错误，表示本次无法验证可达性，但安装流程仍然可以继续。
 
-## 4. 快速开始
+## 4. 命令说明
 
-### 4.1 交互式安装
+### 5.1 命令列表
 
-最常见的方式：
-
-```bash
-./openclaw-install install
+```text
+openclaw-install install            # 交互式安装
+openclaw-install doctor             # 环境诊断
+openclaw-install reconfigure        # 重配置（不重新安装）
+openclaw-install bridge serve       # 启动单个 bridge 通道
+openclaw-install channels list      # 查看所有可用通道
+openclaw-install providers list     # 查看所有供应商预设
+openclaw-install validate           # 验证配置文件
+openclaw-install upgrade            # 自我升级到最新版本
+openclaw-install version            # 显示版本
 ```
 
-程序会依次询问你：
-
-1. 安装模式：`docker` 或 `native`
-2. LLM 供应商预设，默认是 `bailian`
-3. `baseUrl`
-4. `apiKey`
-5. 主模型
-6. fallback 模型
-7. 是否启用 微信 / QQ / 飞书 / 企业微信，其中微信默认启用
-8. 每个 channel 所需的凭证字段；飞书/企微额外需要监听地址和回调路径
-9. 最终确认
-
-### 4.2 非交互快速配置
-
-如果你只想先把 provider 配好，不先接 channel，可以使用：
-
-```bash
-./openclaw-install install \
-  --yes \
-  --mode native \
-  --provider bailian \
-  --api-key sk-xxxx \
-  --primary-model qwen3.5-plus \
-  --skip-verify
-```
-
-说明：
-
-- `--yes` 会尽量使用默认值
-- 这条命令默认会触发微信扫码登录流程（无需填写凭证）
-- `--skip-verify` 会跳过安装后的验证步骤
-
-### 4.3 仅重新写配置，不重新安装
-
-如果 OpenClaw 已经装好，只想切换 provider 或 channel：
-
-```bash
-./openclaw-install reconfigure
-```
-
-或者：
-
-```bash
-./openclaw-install reconfigure \
-  --yes \
-  --mode native \
-  --provider bailian \
-  --api-key your-key \
-  --primary-model qwen-max
-```
-
-`reconfigure` 会：
-
-- 备份已有 `openclaw.json`
-- 重新生成 `bridge.json`
-- 更新 runtime 资产
-- 保留未被安装器托管的自定义配置
-- 不重新安装 OpenClaw 本体
-
-## 5. 命令说明
-
-### 5.1 `doctor`
-
-用法：
+### 5.2 `doctor` - 环境诊断
 
 ```bash
 ./openclaw-install doctor
+./openclaw-install doctor --preview    # 预览检测到的配置值
 ```
 
 用途：
 
-- 查看当前系统是否更适合 `docker` 还是 `native`
-- 判断是否已经装好 `docker` / `node` / `npm` / `openclaw`
-- 查看镜像候选链是否能探测到可用源
+- 查看系统信息（OS/Arch）
+- 检查工具链（docker/node/npm/openclaw/git/curl）
+- 推荐安装模式（docker/native）
+- 显示镜像源探测结果
 
-### 5.2 `install`
-
-用法：
-
-```bash
-./openclaw-install install [flags]
-```
-
-支持参数：
-
-- `--mode`
-- `--provider`
-- `--base-url`
-- `--api-key`
-- `--primary-model`
-- `--fallback-models`
-- `--channels`
-- `--yes`
-- `--skip-verify`
-
-参数说明：
-
-- `--mode`：可选 `docker` 或 `native`
-- `--provider`：provider preset id，例如 `bailian`
-- `--base-url`：覆盖预设中的 API 地址
-- `--api-key`：供应商 API Key
-- `--primary-model`：主模型
-- `--fallback-models`：逗号分隔的 fallback 模型列表
-- `--channels`：逗号分隔的 channel id，例如 `qq,feishu`
-- `--yes`：尽量直接使用默认值
-- `--skip-verify`：跳过安装后的校验
-
-重要说明：
-
-- `--yes` 不是完全无人值守模式
-- 微信默认启用，使用 `--yes` 会触发扫码登录流程（无需填写凭证）
-- 如果启用了 QQ，程序会继续询问 `AppID` 和 `AppSecret`
-- 如果你启用了飞书或企微，程序仍然会继续询问必要的凭证字段
-
-### 5.3 `reconfigure`
-
-用法：
+### 5.3 `install` - 安装 OpenClaw
 
 ```bash
-./openclaw-install reconfigure [flags]
+./openclaw-install install
+./openclaw-install install --yes       # 使用默认值快速安装
 ```
 
-参数基本与 `install` 相同，但不会重新安装 OpenClaw 本体。
+交互式安装会询问：
 
-适合场景：
+1. 安装模式：`docker` 或 `native`
+2. LLM 供应商预设
+3. API key 和 baseUrl
+4. 主模型和 fallback 模型
+5. 启用的通道（微信默认启用）
+6. 各通道的凭证配置
 
-- 切换到新的 LLM 供应商
-- 修改 `baseUrl`
-- 调整主模型和 fallback
-- 增加或关闭 channel
+### 5.4 `reconfigure` - 重配置
 
-### 5.4 `bridge serve`
+```bash
+./openclaw-install reconfigure
+./openclaw-install reconfigure --yes --provider bailian --api-key sk-xxx
+```
 
-用法：
+用途：
+
+- 不重新安装 OpenClaw 本体
+- 修改 provider/channel 配置
+- 备份旧配置并增量合并
+
+### 5.5 `channels list` - 查看通道
+
+```bash
+./openclaw-install channels list
+```
+
+示例输出：
+
+```text
+可用通道：
+  wechat     微信（个人微信 ClawBot 插件）            [插件] [已启用]
+  qq         QQ（qqbot 插件）                   [插件]
+  feishu     飞书                             [bridge]
+  wecom      企业微信                           [bridge]
+
+注：[插件] = OpenClaw 插件，[bridge] = 独立 bridge 服务
+```
+
+### 5.6 `providers list` - 查看供应商
+
+```bash
+./openclaw-install providers list
+```
+
+示例输出：
+
+```text
+可用供应商：
+  bailian         阿里百炼 Coding Plan          [默认]  qwen3.5-plus
+  deepseek        DeepSeek                    deepseek-chat
+  zhipu           智谱 AI                       glm-4-plus
+  moonshot        Moonshot/Kimi               moonshot-v1-8k
+  doubao          豆包                          doubao-1-5-pro-32k
+  custom-openai   自定义 OpenAI Compatible       gpt-4o-mini
+```
+
+### 5.7 `validate` - 验证配置
+
+```bash
+./openclaw-install validate
+./openclaw-install validate --openclaw
+./openclaw-install validate --bridge
+./openclaw-install validate --state
+```
+
+验证：
+
+- `openclaw.json` - 检查 JSON 格式和必要字段
+- `bridge.json` - Bridge 服务配置
+- `install-state.json` - 安装状态
+
+### 5.8 `upgrade` - 自我升级
+
+```bash
+./openclaw-install upgrade
+./openclaw-install upgrade --force
+```
+
+流程：
+
+1. 查询 GitHub 最新版本
+2. 下载对应平台二进制
+3. SHA256 校验验证
+4. 原子替换当前二进制
+
+### 5.9 `bridge serve` - 启动 Bridge
 
 ```bash
 ./openclaw-install bridge serve --channel feishu
+./openclaw-install bridge serve --channel wecom
 ```
 
-可选参数：
+用于单独启动 bridge 类型的通道服务。
 
-- `--channel`：必填，当前用于 bridge 类型 channel，支持 `feishu`、`wecom`
-- `--config`：bridge 配置文件路径，默认是 `~/.openclaw/bridge.json`
-
-作用：
-
-- 单独启动某一个 channel 的 bridge 进程
-- 适合本地调试 bridge 行为
-- 适合排查回调路径和消息转发问题
-
-例如：
+### 5.10 `version` - 显示版本
 
 ```bash
-./openclaw-install bridge serve --channel feishu
+./openclaw-install version
 ```
 
-## 6. 配置文件与运行产物
+## 5. 配置文件与运行产物
 
-安装器会使用 `~/.openclaw` 作为主目录。
-
-### 6.1 `~/.openclaw/openclaw.json`
+### 4.1 `~/.openclaw/openclaw.json`
 
 这是 OpenClaw 主配置文件。安装器会写入或更新这些内容：
 
@@ -352,7 +327,7 @@ scripts/build-release.sh linux/amd64 darwin/arm64 windows/amd64
 
 这意味着你手动加的其他配置通常会保留下来。
 
-### 6.2 `~/.openclaw/bridge.json`
+### 4.2 `~/.openclaw/bridge.json`
 
 这是 bridge 服务的专用配置文件，包含：
 
@@ -362,7 +337,7 @@ scripts/build-release.sh linux/amd64 darwin/arm64 windows/amd64
 - 凭证字段
 - DM / Group policy
 
-### 6.3 `~/.openclaw/install-state.json`
+### 4.3 `~/.openclaw/install-state.json`
 
 这是安装器自己的状态文件，用来记录：
 
@@ -376,7 +351,7 @@ scripts/build-release.sh linux/amd64 darwin/arm64 windows/amd64
 
 安装器后续的 `reconfigure` 会依赖这个文件判断“哪些字段是上一轮由自己管理的”。
 
-### 6.4 `~/.openclaw/.backups/`
+### 4.4 `~/.openclaw/.backups/`
 
 如果发现已有 `openclaw.json`，安装器会在这里自动创建备份。
 
@@ -396,7 +371,7 @@ Native 模式常见文件：
 - `run-openclaw.sh` 或 `run-openclaw.cmd`
 - `bridge-<channel>.sh` 或 `bridge-<channel>.cmd`
 
-## 7. Channel 配置说明
+## 6. Channel 配置说明
 
 ### 7.1 微信（个人微信）
 
@@ -482,7 +457,7 @@ openclaw channels add --channel qqbot --token "AppID:AppSecret"
 - 当前实现优先保证 bridge 能接住请求并完成基础回复链路
 - 不同企业微信接入形态差异较大，v1 更偏基础能力打通
 
-## 8. Bridge 服务注册行为
+## 7. Bridge 服务注册行为
 
 如果启用了 bridge 类型 channel，安装器会为每个 channel 生成独立 bridge 启动脚本。微信和 QQ 都走插件方式，不会生成 bridge 脚本。飞书和企业微信使用 bridge 服务。
 
@@ -511,7 +486,7 @@ openclaw channels add --channel qqbot --token "AppID:AppSecret"
 openclaw-install bridge serve --channel feishu
 ```
 
-## 9. 推荐使用流程
+## 8. 推荐使用流程
 
 ### 9.1 第一次部署
 
@@ -561,7 +536,7 @@ HOME=/tmp/openclaw-smoke ./openclaw-install reconfigure \
 ./openclaw-install bridge serve --channel feishu --config /path/to/bridge.json
 ```
 
-## 10. 验证安装结果
+## 9. 验证安装结果
 
 ### 10.1 验证配置文件
 
@@ -611,7 +586,7 @@ openclaw channels list
 
 如果要验证飞书或企微 bridge，再启动对应 bridge 进程并访问健康检查端点。
 
-## 11. 常见问题
+## 10. 常见问题
 
 ### 11.1 `doctor` 一直提示镜像探测回退
 
@@ -664,7 +639,7 @@ openclaw channels list
 
 不负责自动去各家平台创建应用或申请密钥。
 
-## 12. 已知限制
+## 11. 已知限制
 
 当前 v1 的限制包括：
 
@@ -676,7 +651,7 @@ openclaw channels list
 - 镜像候选链已实现，但实际可用性仍取决于你所在网络环境
 - 微信和 QQ 插件 channel 依赖本机 OpenClaw CLI 在真实环境里成功执行 `plugins install` 和 `channels login` / `channels add`
 
-## 13. 当前仓库中最重要的实现位置
+## 12. 当前仓库中最重要的实现位置
 
 如果你需要继续开发或排查问题，优先看这些文件：
 
@@ -687,7 +662,7 @@ openclaw channels list
 - [internal/config/files.go](/media/data/code/openclaw-install/internal/config/files.go)
 - [internal/bridge/server.go](/media/data/code/openclaw-install/internal/bridge/server.go)
 
-## 14. 建议的下一步
+## 13. 建议的下一步
 
 如果你准备进入真实测试，建议顺序是：
 
