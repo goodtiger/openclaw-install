@@ -184,7 +184,7 @@ func (w *Workflow) registerBridgeService(ctx context.Context, info system.Info, 
 	case "darwin":
 		return w.registerLaunchdService(ctx, info, channelID, scriptPath, stdout, stderr)
 	case "windows":
-		return []string{"Windows 已生成 bridge 启动脚本，但当前版本仍需手动注册服务"}, nil
+		return w.registerWindowsScheduledTask(ctx, info, channelID, scriptPath, stdout, stderr)
 	default:
 		return []string{"当前宿主机系统暂不支持自动注册 bridge 服务"}, nil
 	}
@@ -215,6 +215,10 @@ func (w *Workflow) cleanupObsoleteChannelAssets(ctx context.Context, info system
 			}
 		case "darwin":
 			if err := w.cleanupLaunchdService(ctx, info, channelID, stdout, stderr); err != nil {
+				return err
+			}
+		case "windows":
+			if err := w.cleanupWindowsScheduledTask(ctx, info, channelID, stdout, stderr); err != nil {
 				return err
 			}
 		}
@@ -377,6 +381,52 @@ func (w *Workflow) registerLaunchdService(ctx context.Context, info system.Info,
 		warnings = append(warnings, "加载 launchd agent 失败；可手动执行 `launchctl load "+plistPath+"`")
 	}
 	return warnings, nil
+}
+
+func (w *Workflow) registerWindowsScheduledTask(ctx context.Context, info system.Info, channelID, scriptPath string, stdout, stderr io.Writer) ([]string, error) {
+	warnings := []string{}
+	if err := validateChannelID(channelID); err != nil {
+		return warnings, err
+	}
+	if !system.HasCommand("schtasks") {
+		return []string{"未找到 schtasks；bridge 启动脚本已生成，但尚未注册计划任务"}, nil
+	}
+
+	taskName := "OpenClaw-Bridge-" + channelID
+	cmdPath := filepath.Join(info.RuntimeDir, "bridge-"+channelID+".cmd")
+
+	if _, err := os.Stat(cmdPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return warnings, fmt.Errorf("bridge 脚本不存在: %s", cmdPath)
+		}
+		return warnings, err
+	}
+
+	if err := w.runCommand(ctx, "schtasks", []string{
+		"/Create",
+		"/TN", taskName,
+		"/TR", `start /B "" "` + cmdPath + `"`,
+		"/SC", "ONLOGON",
+		"/RL", "LIMITED",
+		"/F",
+	}, nil, "", stdout, stderr); err != nil {
+		warnings = append(warnings, "创建计划任务失败；可手动执行 schtasks /Create /TN \""+taskName+"\" /TR \"..."+`" /SC ONLOGON /RL LIMITED`)
+	}
+	return warnings, nil
+}
+
+func (w *Workflow) cleanupWindowsScheduledTask(ctx context.Context, info system.Info, channelID string, stdout, stderr io.Writer) error {
+	if err := validateChannelID(channelID); err != nil {
+		return err
+	}
+
+	taskName := "OpenClaw-Bridge-" + channelID
+
+	if system.HasCommand("schtasks") {
+		_ = w.runCommand(ctx, "schtasks", []string{"/Delete", "/TN", taskName, "/F"}, nil, "", stdout, stderr)
+	}
+
+	return nil
 }
 
 func validateChannelID(channelID string) error {

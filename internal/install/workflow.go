@@ -36,6 +36,7 @@ type Request struct {
 	AppVersion  string
 	SkipInstall bool
 	SkipVerify  bool
+	ResumeFrom  string
 }
 
 type Result struct {
@@ -85,6 +86,78 @@ func NewWorkflow(bundle presets.Bundle, executor Executor) *Workflow {
 		},
 		Now: time.Now,
 	}
+}
+
+func (w *Workflow) LoadAndCheckInstallState(info system.Info) (config.InstallState, bool, error) {
+	state, err := config.LoadInstallState(info.StatePath)
+	if err != nil {
+		return config.InstallState{}, false, fmt.Errorf("load install state: %w", err)
+	}
+	if state.Version == "" {
+		return config.InstallState{}, false, nil
+	}
+	return state, !state.InstallComplete, nil
+}
+
+func (w *Workflow) shouldSkipStep(resumeFrom, step string) bool {
+	if resumeFrom == "" {
+		return false
+	}
+	stepOrder := map[string]int{
+		progressStepPrepareWorkspace: 0,
+		progressStepResolveMirrors:   1,
+		progressStepWriteConfig:      2,
+		progressStepGenerateAssets:   3,
+		progressStepSaveState:        4,
+		progressStepInstallDeps:      5,
+		progressStepInstallRuntime:   6,
+		progressStepConfigureChannel: 7,
+		progressStepVerify:           8,
+	}
+	currentIdx, hasCurrent := stepOrder[step]
+	resumeIdx, hasResume := stepOrder[resumeFrom]
+	if !hasCurrent || !hasResume {
+		return false
+	}
+	return currentIdx <= resumeIdx
+}
+
+func (w *Workflow) saveInstallStateWithStep(info system.Info, req Request, previousState config.InstallState, step string) error {
+	mirrors, _ := w.ResolveMirrors(context.Background())
+	state := config.InstallState{
+		Version:           req.AppVersion,
+		InstalledAt:       w.Now().UTC(),
+		Mode:              req.Mode.String(),
+		Platform:          info.OS + "/" + info.Arch,
+		ManagedProviderID: req.Provider.ID,
+		ManagedChannels:   channelIDs(req.Channels),
+		MirrorNames:       mirrorNames(mirrors),
+		RuntimeDir:        info.RuntimeDir,
+		ConfigPath:        info.ConfigPath,
+		BridgeConfigPath:  info.BridgeConfigPath,
+		LastCompletedStep: step,
+		InstallComplete:   false,
+	}
+	return config.SaveInstallState(info.StatePath, state)
+}
+
+func (w *Workflow) saveInstallStateComplete(info system.Info, req Request, previousState config.InstallState) error {
+	mirrors, _ := w.ResolveMirrors(context.Background())
+	state := config.InstallState{
+		Version:           req.AppVersion,
+		InstalledAt:       w.Now().UTC(),
+		Mode:              req.Mode.String(),
+		Platform:          info.OS + "/" + info.Arch,
+		ManagedProviderID: req.Provider.ID,
+		ManagedChannels:   channelIDs(req.Channels),
+		MirrorNames:       mirrorNames(mirrors),
+		RuntimeDir:        info.RuntimeDir,
+		ConfigPath:        info.ConfigPath,
+		BridgeConfigPath:  info.BridgeConfigPath,
+		LastCompletedStep: "verify",
+		InstallComplete:   true,
+	}
+	return config.SaveInstallState(info.StatePath, state)
 }
 
 func (RealExecutor) Run(ctx context.Context, cmd string, args []string, env map[string]string, dir string, stdout, stderr io.Writer) error {
@@ -215,40 +288,76 @@ func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, s
 		return Result{}, fmt.Errorf("load install state: %w", err)
 	}
 
-	assetWarnings, err := w.applyConfigAndAssets(ctx, info, req, previousState, mirrors, result.MirrorNames, stdout, stderr)
-	if err != nil {
-		return Result{}, fmt.Errorf("apply config and assets: %w", err)
+	if w.shouldSkipStep(req.ResumeFrom, progressStepSaveState) {
+		w.progressStep(progressStepWriteConfig)
+		w.progressStep(progressStepGenerateAssets)
+		w.progressStep(progressStepSaveState)
+		w.progressDetailf("跳过写入配置和生成运行时文件（已完成）")
+	} else {
+		assetWarnings, err := w.applyConfigAndAssets(ctx, info, req, previousState, mirrors, result.MirrorNames, stdout, stderr)
+		if err != nil {
+			return Result{}, fmt.Errorf("apply config and assets: %w", err)
+		}
+		result.Warnings = append(result.Warnings, assetWarnings...)
 	}
-	result.Warnings = append(result.Warnings, assetWarnings...)
 
 	if !req.SkipInstall {
 		w.progressStep(progressStepInstallDeps)
-		if err := w.installDependencies(ctx, info, req.Mode, stdout, stderr); err != nil {
-			return result, fmt.Errorf("install dependencies: %w", err)
+		if w.shouldSkipStep(req.ResumeFrom, progressStepInstallDeps) {
+			w.progressDetailf("跳过 %s（已完成）", progressStepInstallDeps)
+		} else {
+			if err := w.installDependencies(ctx, info, req.Mode, stdout, stderr); err != nil {
+				return result, fmt.Errorf("install dependencies: %w", err)
+			}
 		}
+
 		w.progressStep(progressStepInstallRuntime)
-		if err := w.installOpenClaw(ctx, info, req.Mode, mirrors, stdout, stderr); err != nil {
-			return result, fmt.Errorf("install OpenClaw runtime: %w", err)
+		if w.shouldSkipStep(req.ResumeFrom, progressStepInstallRuntime) {
+			w.progressDetailf("跳过 %s（已完成）", progressStepInstallRuntime)
+		} else {
+			if err := w.installOpenClaw(ctx, info, req.Mode, mirrors, stdout, stderr); err != nil {
+				return result, fmt.Errorf("install OpenClaw runtime: %w", err)
+			}
+		}
+
+		if err := w.saveInstallStateWithStep(info, req, previousState, "installRuntime"); err != nil {
+			return result, fmt.Errorf("save install state: %w", err)
 		}
 	}
 
 	w.progressStep(progressStepConfigureChannel)
-	if len(req.Channels) == 0 {
-		w.progressDetailf("未启用任何通道")
+	if w.shouldSkipStep(req.ResumeFrom, progressStepConfigureChannel) {
+		w.progressDetailf("跳过 %s（已完成）", progressStepConfigureChannel)
+	} else {
+		if len(req.Channels) == 0 {
+			w.progressDetailf("未启用任何通道")
+		}
+		channelWarnings, err := w.syncChannels(ctx, info, req, previousState, stdout, stderr)
+		result.Warnings = append(result.Warnings, channelWarnings...)
+		if err != nil {
+			return result, fmt.Errorf("configure channels: %w", err)
+		}
 	}
-	channelWarnings, err := w.syncChannels(ctx, info, req, previousState, stdout, stderr)
-	result.Warnings = append(result.Warnings, channelWarnings...)
-	if err != nil {
-		return result, fmt.Errorf("configure channels: %w", err)
+
+	if err := w.saveInstallStateWithStep(info, req, previousState, "configureChannels"); err != nil {
+		return result, fmt.Errorf("save install state: %w", err)
 	}
 
 	if !req.SkipVerify {
 		w.progressStep(progressStepVerify)
-		verifyWarnings, err := w.verify(ctx, info, req, stdout, stderr)
-		result.Warnings = append(result.Warnings, verifyWarnings...)
-		if err != nil {
-			return result, fmt.Errorf("verify installation: %w", err)
+		if w.shouldSkipStep(req.ResumeFrom, progressStepVerify) {
+			w.progressDetailf("跳过 %s（已完成）", progressStepVerify)
+		} else {
+			verifyWarnings, err := w.verify(ctx, info, req, stdout, stderr)
+			result.Warnings = append(result.Warnings, verifyWarnings...)
+			if err != nil {
+				return result, fmt.Errorf("verify installation: %w", err)
+			}
 		}
+	}
+
+	if err := w.saveInstallStateComplete(info, req, previousState); err != nil {
+		return result, fmt.Errorf("save install state: %w", err)
 	}
 
 	return result, nil
@@ -558,7 +667,7 @@ func (w *Workflow) installDockerMode(ctx context.Context, info system.Info, stdo
 }
 
 func (w *Workflow) installNativeMode(ctx context.Context, info system.Info, mirrors MirrorSelection, stdout, stderr io.Writer) error {
-	openClawPath, err := w.resolveOpenClawExecutable(ctx, info, io.Discard)
+	openClawPath, inPath, err := w.resolveOpenClawWithPath(ctx, info, io.Discard)
 	if err != nil {
 		npmPath, npmErr := w.resolveNPMExecutable(info)
 		if npmErr != nil {
@@ -617,16 +726,42 @@ func (w *Workflow) installNativeMode(ctx context.Context, info system.Info, mirr
 			return lastInstallErr
 		}
 
-		openClawPath, err = w.resolveOpenClawExecutable(ctx, info, stderr)
+		openClawPath, inPath, err = w.resolveOpenClawWithPath(ctx, info, stderr)
 		if err != nil {
 			w.progressDetailf("安装完成，但当前仍找不到 openclaw，已跳过 gateway start")
 			return nil
+		}
+
+		if !inPath {
+			npmBinDir, binDirErr := w.npmGlobalBinDir(ctx, info, stderr)
+			if binDirErr == nil && npmBinDir != "" {
+				w.printPathWarning(npmBinDir, info.OS, stdout)
+			}
 		}
 	} else {
 		w.progressDetailf("OpenClaw 已安装，跳过 npm 全局安装")
 	}
 
 	return w.runCommand(ctx, openClawPath, []string{"gateway", "start"}, nil, "", stdout, stderr)
+}
+
+func (w *Workflow) printPathWarning(npmBinDir, osName string, stdout io.Writer) {
+	fmt.Fprintln(stdout, "")
+	fmt.Fprintf(stdout, "注意：openclaw 已安装到 %s，但该目录不在系统 PATH 中。\n", npmBinDir)
+	fmt.Fprintln(stdout, "请将 "+npmBinDir+" 加入 PATH 以使用 openclaw 命令。")
+
+	if osName == "windows" {
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintf(stdout, "请将 %s 加入系统 PATH：\n", npmBinDir)
+		fmt.Fprintf(stdout, "  setx PATH \"%%PATH%%;%s\"\n", npmBinDir)
+	} else {
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "临时使用（当前会话）:")
+		fmt.Fprintf(stdout, "  export PATH=\"%s:$PATH\"\n", npmBinDir)
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "永久添加（添加到 ~/.bashrc 或 ~/.zshrc）:")
+		fmt.Fprintf(stdout, "  echo 'export PATH=\"%s:$PATH\"' >> ~/.zshrc\n", npmBinDir)
+	}
 }
 
 func (w *Workflow) orderedMirrorCandidates(category string, selected MirrorSelection) []presets.MirrorCandidate {

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/goodtiger/openclaw-install/internal/config"
@@ -418,4 +419,141 @@ func TestInstallAndMainWorkflows(t *testing.T) {
 		t.Logf("Doctor returned recommended mode %v", doctorReport.RecommendedMode)
 	}
 	_ = doctorReport
+}
+
+func TestLoadAndCheckInstallState(t *testing.T) {
+	homeDir := t.TempDir()
+	statePath := filepath.Join(homeDir, "install-state.json")
+
+	info := system.Info{
+		HomeDir:   homeDir,
+		StatePath: statePath,
+	}
+
+	workflow := NewWorkflow(presets.Bundle{}, &recordingExecutor{})
+
+	state, isIncomplete, err := workflow.LoadAndCheckInstallState(info)
+	if err != nil {
+		t.Fatalf("LoadAndCheckInstallState() error = %v", err)
+	}
+	if isIncomplete {
+		t.Error("expected isIncomplete=false for non-existent state file")
+	}
+	if state.Version != "" {
+		t.Errorf("expected empty state, got %s", state.Version)
+	}
+
+	if err := os.WriteFile(statePath, []byte(`{"version": "0.1.0", "installComplete": true}`), 0644); err != nil {
+		t.Fatalf("write test state: %v", err)
+	}
+
+	state, isIncomplete, err = workflow.LoadAndCheckInstallState(info)
+	if err != nil {
+		t.Fatalf("LoadAndCheckInstallState() error = %v", err)
+	}
+	if isIncomplete {
+		t.Error("expected isIncomplete=false for complete install")
+	}
+	if state.Version != "0.1.0" {
+		t.Errorf("expected version 0.1.0, got %s", state.Version)
+	}
+
+	if err := os.WriteFile(statePath, []byte(`{"version": "0.1.0", "installComplete": false, "lastCompletedStep": "installRuntime"}`), 0644); err != nil {
+		t.Fatalf("write test state: %v", err)
+	}
+
+	state, isIncomplete, err = workflow.LoadAndCheckInstallState(info)
+	if err != nil {
+		t.Fatalf("LoadAndCheckInstallState() error = %v", err)
+	}
+	if !isIncomplete {
+		t.Error("expected isIncomplete=true for incomplete install")
+	}
+	if state.LastCompletedStep != "installRuntime" {
+		t.Errorf("expected lastCompletedStep installRuntime, got %s", state.LastCompletedStep)
+	}
+}
+
+func TestShouldSkipStep(t *testing.T) {
+	workflow := NewWorkflow(presets.Bundle{}, &recordingExecutor{})
+
+	tests := []struct {
+		resumeFrom string
+		step       string
+		want       bool
+	}{
+		{"", progressStepWriteConfig, false},
+		{progressStepWriteConfig, progressStepWriteConfig, true},
+		{progressStepWriteConfig, progressStepGenerateAssets, false},
+		{progressStepWriteConfig, progressStepInstallDeps, false},
+		{progressStepSaveState, progressStepSaveState, true},
+		{progressStepSaveState, progressStepInstallDeps, false},
+		{progressStepInstallRuntime, progressStepInstallRuntime, true},
+		{progressStepInstallRuntime, progressStepConfigureChannel, false},
+		{progressStepConfigureChannel, progressStepConfigureChannel, true},
+		{progressStepConfigureChannel, progressStepVerify, false},
+		{"invalidStep", progressStepWriteConfig, false},
+		{progressStepWriteConfig, "invalidStep", false},
+	}
+
+	for _, tt := range tests {
+		got := workflow.shouldSkipStep(tt.resumeFrom, tt.step)
+		if got != tt.want {
+			t.Errorf("shouldSkipStep(%q, %q) = %v, want %v", tt.resumeFrom, tt.step, got, tt.want)
+		}
+	}
+}
+
+func TestInstallWithResumeFrom(t *testing.T) {
+	homeDir := t.TempDir()
+	info := system.Info{
+		OS:               "linux",
+		Arch:             "amd64",
+		HomeDir:          homeDir,
+		OpenClawHome:     filepath.Join(homeDir, ".openclaw"),
+		ConfigPath:       filepath.Join(homeDir, ".openclaw", "openclaw.json"),
+		BridgeConfigPath: filepath.Join(homeDir, ".openclaw", "bridge.json"),
+		StatePath:        filepath.Join(homeDir, ".openclaw", "install-state.json"),
+		RuntimeDir:       filepath.Join(homeDir, ".openclaw", "runtime"),
+	}
+
+	if err := os.MkdirAll(info.OpenClawHome, 0755); err != nil {
+		t.Fatalf("create home dir: %v", err)
+	}
+
+	executor := &recordingExecutor{}
+	workflow := NewWorkflow(presets.Bundle{}, executor)
+
+	req := Request{
+		Mode:        ModeNative,
+		Provider:    config.ProviderConfig{ID: "test", Name: "Test", BaseURL: "https://test.com", PrimaryModel: "model"},
+		AppVersion:  "0.1.0",
+		SkipInstall: true,
+		SkipVerify:  true,
+		ResumeFrom:  progressStepSaveState,
+	}
+
+	var out strings.Builder
+	result, err := workflow.Install(context.Background(), info, req, &out, io.Discard)
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "跳过写入配置和生成运行时文件（已完成）") {
+		t.Errorf("expected skip message in output, got:\n%s", output)
+	}
+
+	state, err := config.LoadInstallState(info.StatePath)
+	if err != nil {
+		t.Fatalf("LoadInstallState() error = %v", err)
+	}
+	if !state.InstallComplete {
+		t.Error("expected InstallComplete=true after full install")
+	}
+	if state.LastCompletedStep != "verify" {
+		t.Errorf("expected LastCompletedStep=verify, got %s", state.LastCompletedStep)
+	}
+
+	_ = result
 }

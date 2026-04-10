@@ -94,4 +94,6 @@ type InstallState struct {
 	RuntimeDir        string            `json:"runtimeDir"`
 	ConfigPath        string            `json:"configPath"`
 	BridgeConfigPath  string            `json:"bridgeConfigPath"`
+	LastCompletedStep string            `json:"lastCompletedStep,omitempty"`
+	InstallComplete   bool              `json:"installComplete,omitempty"`
 }

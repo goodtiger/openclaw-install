@@ -246,41 +246,53 @@ func TestRegisterBridgeService(t *testing.T) {
 	}{
 		{"linux", "registerSystemdUserService"},
 		{"darwin", "registerLaunchdService"},
-		{"windows", "windows service not registered"},
+		{"windows", "registerWindowsScheduledTask"},
 		{"freebsd", "unknown OS"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.osName, func(t *testing.T) {
 			homeDir := t.TempDir()
+			runtimeDir := filepath.Join(homeDir, ".openclaw", "runtime")
+			if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+				t.Fatalf("MkdirAll runtimeDir: %v", err)
+			}
+
+			scriptExt := ".sh"
+			if tt.osName == "windows" {
+				scriptExt = ".cmd"
+			}
+			scriptPath := filepath.Join(runtimeDir, "bridge-test-channel"+scriptExt)
+			if err := os.WriteFile(scriptPath, []byte("@echo off\r\n"), 0o600); err != nil {
+				t.Fatalf("WriteFile scriptPath: %v", err)
+			}
+
 			info := system.Info{
 				OS:         tt.osName,
 				HomeDir:    homeDir,
-				RuntimeDir: filepath.Join(homeDir, ".openclaw", "runtime"),
+				RuntimeDir: runtimeDir,
 			}
 
 			executor := &recordingExecutor{}
 			workflow := NewWorkflow(presets.Bundle{}, executor)
 
-			warnings, err := workflow.registerBridgeService(context.Background(), info, "test-channel", "/path/to/script", io.Discard, io.Discard)
+			warnings, err := workflow.registerBridgeService(context.Background(), info, "test-channel", scriptPath, io.Discard, io.Discard)
 
 			if err != nil && tt.osName != "linux" && tt.osName != "darwin" {
 				t.Errorf("registerBridgeService() error = %v, want no error for %s", err, tt.osName)
 			}
 
 			if tt.osName == "linux" || tt.osName == "darwin" {
-				// For Linux and Darwin, we expect no error, only warnings possibly
 				if err != nil {
 					t.Errorf("registerBridgeService() error = %v for %s, want nil", err, tt.osName)
 				}
 			} else if tt.osName == "windows" {
 				if len(warnings) == 0 {
-					t.Error("registerBridgeService() expected warning for Windows, got none")
-				} else if !strings.Contains(warnings[0], "Windows 已生成 bridge 启动脚本") {
+					t.Error("registerBridgeService() expected warning for Windows (no schtasks in test), got none")
+				} else if !strings.Contains(warnings[0], "未找到 schtasks") && !strings.Contains(warnings[0], "创建计划任务失败") {
 					t.Errorf("registerBridgeService() wrong warning for Windows, got: %v", warnings[0])
 				}
 			} else {
-				// For unknown OS, we expect a warning
 				if len(warnings) == 0 {
 					t.Error("registerBridgeService() expected warning for unknown OS, got none")
 				} else if !strings.Contains(warnings[0], "当前宿主机系统暂不支持") {
@@ -433,5 +445,97 @@ func TestCleanupLaunchdServiceSkipsMissingFile(t *testing.T) {
 	// Test cleanup of non-existent file should not error
 	if err := workflow.cleanupLaunchdService(context.Background(), info, "missing-channel", io.Discard, io.Discard); err != nil {
 		t.Fatalf("cleanupLaunchdService() error = %v, expected no error for missing file", err)
+	}
+}
+
+func TestRegisterWindowsScheduledTask(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("skipping Windows-specific test on non-Windows platform")
+	}
+	homeDir := t.TempDir()
+	runtimeDir := filepath.Join(homeDir, ".openclaw", "runtime")
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll runtimeDir: %v", err)
+	}
+
+	scriptPath := filepath.Join(runtimeDir, "bridge-test-channel.cmd")
+	if err := os.WriteFile(scriptPath, []byte("@echo off\r\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile scriptPath: %v", err)
+	}
+
+	info := system.Info{
+		OS:         "windows",
+		HomeDir:    homeDir,
+		RuntimeDir: runtimeDir,
+	}
+
+	executor := &recordingExecutor{}
+	workflow := NewWorkflow(presets.Bundle{}, executor)
+
+	warnings, err := workflow.registerWindowsScheduledTask(context.Background(), info, "test-channel", scriptPath, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("registerWindowsScheduledTask() error = %v", err)
+	}
+
+	if len(executor.commands) == 0 {
+		t.Error("registerWindowsScheduledTask() expected schtasks command to be recorded")
+	}
+
+	found := false
+	for _, cmd := range executor.commands {
+		if strings.Contains(cmd, "schtasks") && strings.Contains(cmd, "/Create") && strings.Contains(cmd, "OpenClaw-Bridge-test-channel") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("registerWindowsScheduledTask() expected schtasks /Create with OpenClaw-Bridge-test-channel, commands = %#v", executor.commands)
+	}
+
+	_ = warnings
+}
+
+func TestCleanupWindowsScheduledTask(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("skipping Windows-specific test on non-Windows platform")
+	}
+	homeDir := t.TempDir()
+	info := system.Info{
+		OS:      "windows",
+		HomeDir: homeDir,
+	}
+
+	executor := &recordingExecutor{}
+	workflow := NewWorkflow(presets.Bundle{}, executor)
+
+	if err := workflow.cleanupWindowsScheduledTask(context.Background(), info, "test-channel", io.Discard, io.Discard); err != nil {
+		t.Fatalf("cleanupWindowsScheduledTask() error = %v", err)
+	}
+
+	if len(executor.commands) == 0 {
+		t.Error("cleanupWindowsScheduledTask() expected schtasks command to be recorded")
+	}
+
+	found := false
+	for _, cmd := range executor.commands {
+		if strings.Contains(cmd, "schtasks") && strings.Contains(cmd, "/Delete") && strings.Contains(cmd, "OpenClaw-Bridge-test-channel") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("cleanupWindowsScheduledTask() expected schtasks /Delete with OpenClaw-Bridge-test-channel, commands = %#v", executor.commands)
+	}
+}
+
+func TestCleanupWindowsScheduledTaskSkipsMissingTask(t *testing.T) {
+	executor := &recordingExecutor{}
+	workflow := NewWorkflow(presets.Bundle{}, executor)
+
+	homeDir := t.TempDir()
+	info := system.Info{HomeDir: homeDir}
+
+	if err := workflow.cleanupWindowsScheduledTask(context.Background(), info, "missing-channel", io.Discard, io.Discard); err != nil {
+		t.Fatalf("cleanupWindowsScheduledTask() error = %v, expected no error for missing task", err)
 	}
 }

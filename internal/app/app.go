@@ -333,7 +333,6 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 		return err
 	}
 
-	// Non-TTY safety: require --yes when stdin is not a terminal.
 	if !info.IsTTY && !options.yes {
 		return errors.New("非交互式终端中运行，请使用 --yes 参数跳过提示")
 	}
@@ -341,10 +340,29 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 	prompter := ui.NewPrompter(in, out)
 	defaultMode := install.Mode(options.mode)
 
-	state, err := config.LoadInstallState(info.StatePath)
+	existingState, err := config.LoadInstallState(info.StatePath)
 	if err != nil {
 		return err
 	}
+
+	workflow := install.NewWorkflow(bundle, install.RealExecutor{})
+	resumeFrom := ""
+	if existingState.Version != "" && !existingState.InstallComplete {
+		if options.yes {
+			resumeFrom = existingState.LastCompletedStep
+			fmt.Fprintf(out, "检测到上次安装未完成（完成到 %s），自动从断点继续\n", resumeFrom)
+		} else {
+			confirm, askErr := prompter.AskYesNo(fmt.Sprintf("检测到上次安装未完成（完成到 %s），是否从断点继续？", existingState.LastCompletedStep), true)
+			if askErr != nil {
+				return askErr
+			}
+			if confirm {
+				resumeFrom = existingState.LastCompletedStep
+				fmt.Fprintf(out, "从断点继续（%s）\n", resumeFrom)
+			}
+		}
+	}
+
 	bridgeCfg, err := loadExistingBridgeConfig(info.BridgeConfigPath)
 	if err != nil {
 		return err
@@ -353,8 +371,8 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 	if defaultMode == "" {
 		if envMode := envOrEmpty("OPENCLAW_MODE"); envMode != "" {
 			defaultMode = install.Mode(envMode)
-		} else if state.Mode != "" {
-			defaultMode = install.Mode(state.Mode)
+		} else if existingState.Mode != "" {
+			defaultMode = install.Mode(existingState.Mode)
 		} else {
 			defaultMode = install.RecommendedMode(info)
 		}
@@ -365,7 +383,7 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 		return err
 	}
 
-	providerPreset, err := chooseProviderPreset(prompter, bundle, options.providerID, options.yes, state.ManagedProviderID)
+	providerPreset, err := chooseProviderPreset(prompter, bundle, options.providerID, options.yes, existingState.ManagedProviderID)
 	if err != nil {
 		return err
 	}
@@ -375,7 +393,7 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 		return err
 	}
 
-	channelSelections, err := buildChannelSelections(prompter, bundle, bridgeCfg, state.ManagedChannels, options.channels, options.yes, out)
+	channelSelections, err := buildChannelSelections(prompter, bundle, bridgeCfg, existingState.ManagedChannels, options.channels, options.yes, out)
 	if err != nil {
 		return err
 	}
@@ -387,6 +405,7 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 		AppVersion:  Version,
 		SkipVerify:  options.skipVerify,
 		SkipInstall: options.reconfigure,
+		ResumeFrom:  resumeFrom,
 	}
 
 	if !options.yes {
@@ -408,7 +427,6 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 		}
 	}
 
-	workflow := install.NewWorkflow(bundle, install.RealExecutor{})
 	ctx := context.Background()
 
 	var result install.Result
@@ -426,7 +444,6 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 	return nil
 }
 
-// printSuccessSummary prints a visually distinct success box after install/reconfigure.
 func printSuccessSummary(out io.Writer, req install.Request, result install.Result, reconfigure bool) {
 	border := "╔══════════════════════════════════════════════════════════╗"
 	bottom := "╚══════════════════════════════════════════════════════════╝"

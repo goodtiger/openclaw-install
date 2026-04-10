@@ -52,23 +52,28 @@ func (w *Workflow) npmGlobalPrefix(ctx context.Context, info system.Info, stderr
 }
 
 func (w *Workflow) resolveOpenClawExecutable(ctx context.Context, info system.Info, stderr io.Writer) (string, error) {
+	path, _, err := w.resolveOpenClawWithPath(ctx, info, stderr)
+	return path, err
+}
+
+func (w *Workflow) resolveOpenClawWithPath(ctx context.Context, info system.Info, stderr io.Writer) (path string, inPath bool, err error) {
 	if path, err := exec.LookPath("openclaw"); err == nil {
-		return path, nil
+		return path, true, nil
 	}
 
 	prefix, err := w.npmGlobalPrefix(ctx, info, stderr)
 	if err != nil {
-		return "", fmt.Errorf("找不到 openclaw 命令: %w", err)
+		return "", false, fmt.Errorf("找不到 openclaw 命令: %w", err)
 	}
 
 	candidates := openClawExecutableCandidates(prefix, info.OS)
 	for _, candidate := range candidates {
 		if executableExists(candidate) {
-			return candidate, nil
+			return candidate, false, nil
 		}
 	}
 
-	return "", fmt.Errorf("找不到 openclaw 命令")
+	return "", false, fmt.Errorf("找不到 openclaw 命令")
 }
 
 func openClawExecutableCandidates(prefix, osName string) []string {
@@ -108,4 +113,17 @@ func windowsNodeCommandCandidates(name string) []string {
 func executableExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+func (w *Workflow) npmGlobalBinDir(ctx context.Context, info system.Info, stderr io.Writer) (string, error) {
+	prefix, err := w.npmGlobalPrefix(ctx, info, stderr)
+	if err != nil {
+		return "", err
+	}
+
+	if info.OS == "windows" {
+		return prefix, nil
+	}
+
+	return filepath.Join(prefix, "bin"), nil
 }
