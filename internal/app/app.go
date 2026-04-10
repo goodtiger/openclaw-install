@@ -347,7 +347,7 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 
 	workflow := install.NewWorkflow(bundle, install.RealExecutor{})
 	resumeFrom := ""
-	if existingState.Version != "" && !existingState.InstallComplete {
+	if !options.reconfigure && existingState.Version != "" && !existingState.InstallComplete {
 		if options.yes {
 			resumeFrom = existingState.LastCompletedStep
 			fmt.Fprintf(out, "检测到上次安装未完成（完成到 %s），自动从断点继续\n", resumeFrom)

@@ -759,8 +759,13 @@ func (w *Workflow) printPathWarning(npmBinDir, osName string, stdout io.Writer) 
 		fmt.Fprintln(stdout, "临时使用（当前会话）:")
 		fmt.Fprintf(stdout, "  export PATH=\"%s:$PATH\"\n", npmBinDir)
 		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "永久添加（添加到 ~/.bashrc 或 ~/.zshrc）:")
-		fmt.Fprintf(stdout, "  echo 'export PATH=\"%s:$PATH\"' >> ~/.zshrc\n", npmBinDir)
+		fmt.Fprintln(stdout, "永久添加（添加到 shell 配置文件）:")
+		shell := os.Getenv("SHELL")
+		if shell != "" && strings.HasSuffix(shell, "bash") {
+			fmt.Fprintf(stdout, "  echo 'export PATH=\"%s:$PATH\"' >> ~/.bashrc\n", npmBinDir)
+		} else {
+			fmt.Fprintf(stdout, "  echo 'export PATH=\"%s:$PATH\"' >> ~/.zshrc\n", npmBinDir)
+		}
 	}
 }
 
