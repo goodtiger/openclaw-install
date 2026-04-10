@@ -14,7 +14,7 @@ curl -fsSL https://raw.githubusercontent.com/goodtiger/openclaw-install/main/scr
 curl -fsSL https://gitee.com/goodtiger/openclaw-install/raw/main/scripts/install.sh | bash
 
 # 指定版本
-curl -fsSL https://raw.githubusercontent.com/goodtiger/openclaw-install/main/scripts/install.sh | bash -s -- --version 0.1.9
+curl -fsSL https://raw.githubusercontent.com/goodtiger/openclaw-install/main/scripts/install.sh | bash -s -- --version 0.2.0
 ```
 
 ### 手动安装
@@ -73,7 +73,20 @@ curl -fsSL https://raw.githubusercontent.com/goodtiger/openclaw-install/main/scr
 ./openclaw-install upgrade
 ```
 
-自动从 GitHub releases 下载最新版本，SHA256 校验，原子替换。
+自动从 GitHub releases 下载最新版本，支持 ghproxy 镜像回退，SHA256 校验，原子替换。
+
+## 更新日志
+
+### v0.2.0 — 中国区网络优化
+
+- 🚀 一键安装脚本 `scripts/install.sh`，支持 Gitee → ghproxy → GitHub 三级回退
+- 🔄 `upgrade` 命令增加 GitHub API 和下载镜像回退（直连 → ghproxy）
+- 🌐 所有 HTTP 客户端支持系统代理（`HTTP_PROXY`/`HTTPS_PROXY`）
+- 🐳 Docker 镜像增加阿里云源候选（`registry.cn-hangzhou.aliyuncs.com`）
+- 📦 Dockerfile 支持 `HTTP_PROXY`/`HTTPS_PROXY` build-arg 传递
+- 🔍 `doctor` 命令增加 GitHub 连通性检测
+- 🛠 新增 `GoProxyEnv` 辅助方法，支持 Go 模块代理配置（`GOPROXY` + `GOSUMDB`）
+- 🐛 修复 `upgrade` 中循环内 `defer` 导致的资源泄漏问题
 
 ## 常见问题
 
@@ -107,4 +120,4 @@ scripts/build-release.sh
 
 ---
 
-**最新版本**: v0.1.9 | [Releases](https://github.com/goodtiger/openclaw-install/releases)
+**最新版本**: v0.2.0 | [Releases](https://github.com/goodtiger/openclaw-install/releases)
