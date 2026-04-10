@@ -75,10 +75,15 @@ func NewWorkflow(bundle presets.Bundle, executor Executor) *Workflow {
 		executor = RealExecutor{}
 	}
 	return &Workflow{
-		Presets:    bundle,
-		Executor:   executor,
-		HTTPClient: &http.Client{Timeout: 3 * time.Second},
-		Now:        time.Now,
+		Presets:  bundle,
+		Executor: executor,
+		HTTPClient: &http.Client{
+			Timeout: 3 * time.Second,
+			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+			},
+		},
+		Now: time.Now,
 	}
 }
 
@@ -138,12 +143,29 @@ func (w *Workflow) Doctor(ctx context.Context, info system.Info) (DoctorReport, 
 		warnings = append(warnings, "Windows 默认更推荐 Docker 模式；如果要使用 native，请先确保 Node.js/npm 可用")
 	}
 
+	if ghReachable, ghMsg := w.checkGitHubConnectivity(ctx); !ghReachable {
+		warnings = append(warnings, ghMsg)
+	}
+
 	return DoctorReport{
 		Info:            info,
 		RecommendedMode: recommendedMode(info),
 		MirrorNames:     mirrorNames(mirrors),
 		Warnings:        warnings,
 	}, nil
+}
+
+func (w *Workflow) checkGitHubConnectivity(ctx context.Context) (bool, string) {
+	urls := []string{
+		"https://api.github.com",
+		"https://ghproxy.com/https://api.github.com",
+	}
+	for _, url := range urls {
+		if err := w.probeURL(ctx, url); err == nil {
+			return true, ""
+		}
+	}
+	return false, "GitHub API 不可达，升级命令可能失败；已配置 ghproxy 镜像回退，但当前网络仍无法访问"
 }
 
 func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, stdout, stderr io.Writer) (Result, error) {
@@ -572,6 +594,11 @@ func (w *Workflow) installNativeMode(ctx context.Context, info system.Info, mirr
 				"NPM_CONFIG_REGISTRY": registryURL,
 				"npm_config_registry": registryURL,
 			}
+			if goEnv := w.GoProxyEnv(mirrors); goEnv != nil {
+				for k, v := range goEnv {
+					env[k] = v
+				}
+			}
 			instErr := w.runCommand(ctx, npmPath, []string{"install", "-g", "openclaw"}, env, "", stdout, stderr)
 			if instErr == nil {
 				if idx > 0 {
@@ -615,6 +642,25 @@ func (w *Workflow) orderedMirrorCandidates(category string, selected MirrorSelec
 	}
 
 	return ordered
+}
+
+// GoProxyEnv returns GOPROXY and GOSUMDB environment variables based on the
+// selected go_proxy mirror. Returns nil if no go_proxy mirror is available.
+func (w *Workflow) GoProxyEnv(mirrors MirrorSelection) map[string]string {
+	candidates := w.orderedMirrorCandidates("go_proxy", mirrors)
+	if len(candidates) == 0 {
+		return nil
+	}
+	// Use the first (best) candidate
+	candidate := candidates[0]
+	baseURL := strings.TrimSpace(candidate.BaseURL)
+	if baseURL == "" {
+		return nil
+	}
+	return map[string]string{
+		"GOPROXY": baseURL + ",direct",
+		"GOSUMDB": "sum.golang.google.cn",
+	}
 }
 
 func appendUniqueMirrorCandidate(dst []presets.MirrorCandidate, seen map[string]struct{}, candidate presets.MirrorCandidate) []presets.MirrorCandidate {

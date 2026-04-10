@@ -4,6 +4,21 @@
 
 ## 快速开始
 
+### 一键安装（推荐）
+
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/goodtiger/openclaw-install/main/scripts/install.sh | bash
+
+# 或从 Gitee（国内更快）
+curl -fsSL https://gitee.com/goodtiger/openclaw-install/raw/main/scripts/install.sh | bash
+
+# 指定版本
+curl -fsSL https://raw.githubusercontent.com/goodtiger/openclaw-install/main/scripts/install.sh | bash -s -- --version 0.1.9
+```
+
+### 手动安装
+
 ```bash
 # 1. 环境诊断
 ./openclaw-install doctor

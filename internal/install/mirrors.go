@@ -49,7 +49,12 @@ func (w *Workflow) chooseMirror(ctx context.Context, category string, candidates
 func (w *Workflow) probeURL(ctx context.Context, rawURL string) error {
 	client := w.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: 3 * time.Second}
+		client = &http.Client{
+			Timeout: 3 * time.Second,
+			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+			},
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)

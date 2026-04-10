@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -90,6 +91,68 @@ func TestParseCSV(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestEnvOrEmptyReadsOpenClawDotEnv(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("BAILIAN_API_KEY", "")
+
+	openclawDir := filepath.Join(homeDir, ".openclaw")
+	if err := os.MkdirAll(openclawDir, 0o755); err != nil {
+		t.Fatalf("mkdir .openclaw: %v", err)
+	}
+	envPath := filepath.Join(openclawDir, ".env")
+	if err := os.WriteFile(envPath, []byte("BAILIAN_API_KEY=dot-env-key\n"), 0o600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	if got := envOrEmpty("BAILIAN_API_KEY"); got != "dot-env-key" {
+		t.Fatalf("envOrEmpty returned %q, want %q", got, "dot-env-key")
+	}
+}
+
+func TestBuildProviderConfigPrefersOpenClawDotEnvOverExistingAPIKey(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("BAILIAN_API_KEY", "")
+	t.Setenv("OPENCLAW_API_KEY", "")
+	t.Setenv("OPENCLAW_BASE_URL", "")
+	t.Setenv("OPENCLAW_MODEL", "")
+
+	openclawDir := filepath.Join(homeDir, ".openclaw")
+	if err := os.MkdirAll(openclawDir, 0o755); err != nil {
+		t.Fatalf("mkdir .openclaw: %v", err)
+	}
+	envPath := filepath.Join(openclawDir, ".env")
+	if err := os.WriteFile(envPath, []byte("BAILIAN_API_KEY=new-key-from-dotenv\n"), 0o600); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	preset := presets.ProviderPreset{
+		ID:           "bailian",
+		Name:         "Bailian",
+		Type:         "openai-compatible",
+		BaseURL:      "https://example.invalid/v1",
+		API:          "openai-completions",
+		APIKeyEnv:    "BAILIAN_API_KEY",
+		DefaultModel: "qwen3.5-plus",
+		Models:       []string{"qwen3.5-plus"},
+	}
+	existing := config.ProviderConfig{
+		API:          "openai-completions",
+		BaseURL:      "https://example.invalid/v1",
+		APIKey:       "stale-existing-key",
+		PrimaryModel: "qwen3.5-plus",
+	}
+
+	cfg, err := buildProviderConfig(ui.NewPrompter(strings.NewReader(""), io.Discard), preset, existing, runInstallOptions{yes: true}, io.Discard)
+	if err != nil {
+		t.Fatalf("buildProviderConfig returned error: %v", err)
+	}
+	if cfg.APIKey != "new-key-from-dotenv" {
+		t.Fatalf("APIKey = %q, want %q", cfg.APIKey, "new-key-from-dotenv")
 	}
 }
 

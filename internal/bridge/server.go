@@ -59,7 +59,12 @@ type OpenAICompatibleClient struct {
 
 func NewServer(cfg config.BridgeConfig, completer Completer, httpClient *http.Client, logOutput io.Writer) *Server {
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: time.Duration(cfg.TimeoutSeconds) * time.Second}
+		httpClient = &http.Client{
+			Timeout: time.Duration(cfg.TimeoutSeconds) * time.Second,
+			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+			},
+		}
 		if cfg.TimeoutSeconds == 0 {
 			httpClient.Timeout = 30 * time.Second
 		}

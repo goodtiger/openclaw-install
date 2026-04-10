@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -171,14 +173,14 @@ func printDetectionPreview(out io.Writer, bundle presets.Bundle, info system.Inf
 
 	// Provider
 	providerResolved := shared.ResolveWithSource(
-		shared.ResolvedValue{Value: os.Getenv("OPENCLAW_PROVIDER"), Source: "env:OPENCLAW_PROVIDER"},
+		shared.ResolvedValue{Value: envOrEmpty("OPENCLAW_PROVIDER"), Source: "env:OPENCLAW_PROVIDER"},
 	)
 	if providerResolved.Value == "" {
 		for _, p := range bundle.Providers {
 			if p.APIKeyEnv == "" {
 				continue
 			}
-			if v := strings.TrimSpace(os.Getenv(p.APIKeyEnv)); v != "" {
+			if v := envOrEmpty(p.APIKeyEnv); v != "" {
 				providerResolved = shared.ResolvedValue{Value: p.ID, Source: fmt.Sprintf("env:%s (推断)", p.APIKeyEnv)}
 				break
 			}
@@ -197,12 +199,12 @@ func printDetectionPreview(out io.Writer, bundle presets.Bundle, info system.Inf
 
 	// API Key
 	apiKeyResolved := shared.ResolveWithSource(
-		shared.ResolvedValue{Value: os.Getenv("OPENCLAW_API_KEY"), Source: "env:OPENCLAW_API_KEY"},
+		shared.ResolvedValue{Value: envOrEmpty("OPENCLAW_API_KEY"), Source: "env:OPENCLAW_API_KEY"},
 	)
 	if apiKeyResolved.Value == "" && providerResolved.Value != "" {
 		if provider, ok := bundle.ProviderByID(providerResolved.Value); ok && provider.APIKeyEnv != "" {
 			apiKeyResolved = shared.ResolveWithSource(
-				shared.ResolvedValue{Value: os.Getenv(provider.APIKeyEnv), Source: fmt.Sprintf("env:%s", provider.APIKeyEnv)},
+				shared.ResolvedValue{Value: envOrEmpty(provider.APIKeyEnv), Source: fmt.Sprintf("env:%s", provider.APIKeyEnv)},
 			)
 		}
 	}
@@ -214,7 +216,7 @@ func printDetectionPreview(out io.Writer, bundle presets.Bundle, info system.Inf
 
 	// Model
 	modelResolved := shared.ResolveWithSource(
-		shared.ResolvedValue{Value: os.Getenv("OPENCLAW_MODEL"), Source: "env:OPENCLAW_MODEL"},
+		shared.ResolvedValue{Value: envOrEmpty("OPENCLAW_MODEL"), Source: "env:OPENCLAW_MODEL"},
 	)
 	if modelResolved.Value == "" && providerResolved.Value != "" {
 		if provider, ok := bundle.ProviderByID(providerResolved.Value); ok && provider.DefaultModel != "" {
@@ -349,7 +351,7 @@ func runInstallLike(options runInstallOptions, in io.Reader, out, errOut io.Writ
 	}
 
 	if defaultMode == "" {
-		if envMode := strings.TrimSpace(os.Getenv("OPENCLAW_MODE")); envMode != "" {
+		if envMode := envOrEmpty("OPENCLAW_MODE"); envMode != "" {
 			defaultMode = install.Mode(envMode)
 		} else if state.Mode != "" {
 			defaultMode = install.Mode(state.Mode)
@@ -549,7 +551,7 @@ func chooseProviderPreset(prompter *ui.Prompter, bundle presets.Bundle, provider
 	}
 	// 2. OPENCLAW_PROVIDER env var
 	if providerID == "" {
-		providerID = strings.TrimSpace(os.Getenv("OPENCLAW_PROVIDER"))
+		providerID = envOrEmpty("OPENCLAW_PROVIDER")
 	}
 	if providerID != "" {
 		provider, ok := bundle.ProviderByID(providerID)
@@ -563,7 +565,7 @@ func chooseProviderPreset(prompter *ui.Prompter, bundle presets.Bundle, provider
 		if provider.APIKeyEnv == "" {
 			continue
 		}
-		if v := strings.TrimSpace(os.Getenv(provider.APIKeyEnv)); v != "" {
+		if v := envOrEmpty(provider.APIKeyEnv); v != "" {
 			return provider, nil
 		}
 	}
@@ -594,9 +596,9 @@ func buildProviderConfig(prompter *ui.Prompter, preset presets.ProviderPreset, e
 		Catalog: convertProviderCatalog(preset.Catalog),
 	}
 
-	baseURL := firstNonEmpty(options.baseURL, os.Getenv("OPENCLAW_BASE_URL"), existing.BaseURL, preset.BaseURL)
-	apiKey := firstNonEmpty(options.apiKey, os.Getenv("OPENCLAW_API_KEY"), os.Getenv(preset.APIKeyEnv), existing.APIKey, placeholderAPIKey)
-	primaryModel := firstNonEmpty(options.primaryModel, os.Getenv("OPENCLAW_MODEL"), existing.PrimaryModel, preset.DefaultModel)
+	baseURL := firstNonEmpty(options.baseURL, envOrEmpty("OPENCLAW_BASE_URL"), existing.BaseURL, preset.BaseURL)
+	apiKey := firstNonEmpty(options.apiKey, envOrEmpty("OPENCLAW_API_KEY"), envOrEmpty(preset.APIKeyEnv), existing.APIKey, placeholderAPIKey)
+	primaryModel := firstNonEmpty(options.primaryModel, envOrEmpty("OPENCLAW_MODEL"), existing.PrimaryModel, preset.DefaultModel)
 	if primaryModel == "" {
 		modelIDs := providerModelIDs(preset, cfg.Catalog)
 		if len(modelIDs) > 0 {
@@ -906,5 +908,47 @@ func envOrEmpty(key string) string {
 	if key == "" {
 		return ""
 	}
-	return strings.TrimSpace(os.Getenv(key))
+	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+		return value
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	value, err := lookupDotEnvValue(filepath.Join(homeDir, ".openclaw", ".env"), key)
+	if err != nil {
+		return ""
+	}
+	return value
+}
+
+func lookupDotEnvValue(path, key string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimPrefix(line, "export ")
+		name, value, found := strings.Cut(line, "=")
+		if !found {
+			continue
+		}
+		if strings.TrimSpace(name) != key {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		value = strings.Trim(value, `"'`)
+		return value, nil
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return "", nil
 }

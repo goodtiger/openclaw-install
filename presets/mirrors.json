@@ -14,6 +14,12 @@
         "image_prefix": "docker.1ms.run/library/"
       },
       {
+        "name": "aliyun",
+        "base_url": "registry.cn-hangzhou.aliyuncs.com/library/node:22-bullseye",
+        "probe_url": "https://registry.cn-hangzhou.aliyuncs.com/v2/",
+        "image_prefix": "registry.cn-hangzhou.aliyuncs.com/library/"
+      },
+      {
         "name": "official",
         "base_url": "node:22-bullseye",
         "probe_url": "https://registry-1.docker.io/v2/",

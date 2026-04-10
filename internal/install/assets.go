@@ -89,7 +89,13 @@ func writeDockerAssets(info system.Info, mirrors MirrorSelection) error {
 	dockerfile := `ARG NODE_IMAGE=node:22-bullseye
 FROM ${NODE_IMAGE}
 ARG NPM_REGISTRY=https://registry.npmjs.org
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
 ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY}
+ENV HTTP_PROXY=${HTTP_PROXY}
+ENV HTTPS_PROXY=${HTTPS_PROXY}
+ENV NO_PROXY=${NO_PROXY}
 RUN npm config set registry "${NPM_CONFIG_REGISTRY}" && npm install -g openclaw
 EXPOSE 18789
 WORKDIR /root/.openclaw
@@ -104,6 +110,9 @@ CMD ["sh", "-lc", "openclaw gateway start --foreground"]
       args:
         NODE_IMAGE: ${NODE_IMAGE}
         NPM_REGISTRY: ${NPM_REGISTRY}
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
     ports:
       - "18789:18789"
     volumes:
