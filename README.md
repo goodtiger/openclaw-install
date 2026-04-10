@@ -10,9 +10,6 @@
 # macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/goodtiger/openclaw-install/main/scripts/install.sh | bash
 
-# 或从 Gitee（国内更快）
-curl -fsSL https://gitee.com/goodtiger/openclaw-install/raw/main/scripts/install.sh | bash
-
 # 指定版本
 curl -fsSL https://raw.githubusercontent.com/goodtiger/openclaw-install/main/scripts/install.sh | bash -s -- --version 0.2.0
 ```
@@ -79,7 +76,7 @@ curl -fsSL https://raw.githubusercontent.com/goodtiger/openclaw-install/main/scr
 
 ### v0.2.0 — 中国区网络优化
 
-- 🚀 一键安装脚本 `scripts/install.sh`，支持 Gitee → ghproxy → GitHub 三级回退
+- 🚀 一键安装脚本 `scripts/install.sh`，支持 ghproxy 镜像回退
 - 🔄 `upgrade` 命令增加 GitHub API 和下载镜像回退（直连 → ghproxy）
 - 🌐 所有 HTTP 客户端支持系统代理（`HTTP_PROXY`/`HTTPS_PROXY`）
 - 🐳 Docker 镜像增加阿里云源候选（`registry.cn-hangzhou.aliyuncs.com`）

@@ -9,9 +9,8 @@ REPO="goodtiger/openclaw-install"
 BINARY_NAME="openclaw-install"
 INSTALL_DIR="/usr/local/bin"
 
-# 下载源优先级：Gitee → ghproxy → GitHub
+# 下载源优先级：ghproxy → GitHub
 DOWNLOAD_SOURCES=(
-  "Gitee|https://gitee.com/${REPO}/releases/latest/download"
   "ghproxy|https://ghproxy.com/https://github.com/${REPO}/releases/latest/download"
   "GitHub|https://github.com/${REPO}/releases/latest/download"
 )
@@ -80,7 +79,6 @@ download_with_fallback() {
   local version="$3"
 
   local sources=(
-    "Gitee|https://gitee.com/${REPO}/releases/download/v${version}/${filename}"
     "ghproxy|https://ghproxy.com/https://github.com/${REPO}/releases/download/v${version}/${filename}"
     "GitHub|https://github.com/${REPO}/releases/download/v${version}/${filename}"
   )
@@ -165,7 +163,7 @@ usage() {
 
 示例:
   $0                     # 安装最新版本
-  $0 --version 0.1.9     # 安装指定版本
+  $0 --version 0.2.0     # 安装指定版本
 EOF
 }
 
