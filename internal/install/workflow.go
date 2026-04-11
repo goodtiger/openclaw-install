@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/goodtiger/openclaw-install/internal/config"
+	"github.com/goodtiger/openclaw-install/internal/output"
 	"github.com/goodtiger/openclaw-install/internal/shared"
 	"github.com/goodtiger/openclaw-install/internal/system"
 	"github.com/goodtiger/openclaw-install/presets"
@@ -238,7 +239,7 @@ func (w *Workflow) checkGitHubConnectivity(ctx context.Context) (bool, string) {
 			return true, ""
 		}
 	}
-	return false, "GitHub API 不可达，升级命令可能失败；已配置 ghproxy 镜像回退，但当前网络仍无法访问"
+	return false, "GitHub API 不可达，升级命令可能失败；已配置 ghproxy 镜像回退，但当前网络仍无法访问\n💡 设置代理: export HTTPS_PROXY=http://127.0.0.1:7890"
 }
 
 func (w *Workflow) Install(ctx context.Context, info system.Info, req Request, stdout, stderr io.Writer) (Result, error) {
@@ -487,7 +488,7 @@ func (w *Workflow) installDependencies(ctx context.Context, info system.Info, mo
 	case ModeNative:
 		return w.ensureNode(ctx, info, stdout, stderr)
 	default:
-		return fmt.Errorf("不支持的安装模式 %s", mode)
+		return output.NewFixablef("不支持的安装模式 %s", "请使用 docker 或 native 模式", mode)
 	}
 }
 
@@ -498,7 +499,7 @@ func (w *Workflow) installOpenClaw(ctx context.Context, info system.Info, mode M
 	case ModeNative:
 		return w.installNativeMode(ctx, info, mirrors, stdout, stderr)
 	default:
-		return fmt.Errorf("不支持的安装模式 %s", mode)
+		return output.NewFixablef("不支持的安装模式 %s", "请使用 docker 或 native 模式", mode)
 	}
 }
 
@@ -570,7 +571,8 @@ func (w *Workflow) ensureDocker(ctx context.Context, info system.Info, stdout, s
 			return fmt.Errorf("install docker via winget: %w", err)
 		}
 	default:
-		return errors.New("未安装 Docker，且没有可用的包管理器用于自动安装")
+		return output.NewFixable("未安装 Docker，且没有可用的包管理器用于自动安装",
+			"手动安装 Docker Desktop: https://www.docker.com/products/docker-desktop/")
 	}
 
 	if info.PackageManager == "apt-get" || info.PackageManager == "dnf" || info.PackageManager == "yum" {
@@ -647,7 +649,8 @@ func (w *Workflow) ensureNode(ctx context.Context, info system.Info, stdout, std
 			return fmt.Errorf("install node via winget: %w", err)
 		}
 	default:
-		return errors.New("未安装 Node.js/npm，且没有可用的包管理器用于自动安装")
+		return output.NewFixable("未安装 Node.js/npm，且没有可用的包管理器用于自动安装",
+			"1) 使用 nvm 安装: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash\n2) 或手动下载: https://nodejs.org")
 	}
 
 	if info.PackageManager == "apt-get" || info.PackageManager == "dnf" || info.PackageManager == "yum" {
@@ -886,7 +889,8 @@ func composeInvocation() (string, []string, error) {
 	if system.HasCommand("docker-compose") {
 		return "docker-compose", nil, nil
 	}
-	return "", nil, errors.New("docker compose 不可用")
+	return "", nil, output.NewFixable("docker compose 不可用",
+		"1) Docker Desktop 用户: 在 Preferences 中启用 Compose\n2) Linux 用户: 安装 docker-compose-plugin (sudo apt-get install docker-compose-plugin)")
 }
 
 func flattenEnv(env map[string]string) []string {

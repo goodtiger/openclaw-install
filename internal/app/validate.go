@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/goodtiger/openclaw-install/internal/config"
+	"github.com/goodtiger/openclaw-install/internal/output"
 )
 
 func runValidate(args []string, out, errOut io.Writer) error {
@@ -89,26 +90,26 @@ func validateOpenclawFile(path string) string {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "文件不存在"
+			return output.NewFixable("文件不存在", "运行 openclaw-install install 以生成配置文件").Error()
 		}
 		return fmt.Sprintf("读取文件失败: %v", err)
 	}
 
 	if len(strings.TrimSpace(string(content))) == 0 {
-		return "文件为空"
+		return output.NewFixable("文件为空", "检查文件是否被意外清空，可运行 openclaw-install reconfigure 重新生成").Error()
 	}
 
 	var data map[string]any
 	if err := json.Unmarshal(content, &data); err != nil {
-		return fmt.Sprintf("JSON 解析失败: %v", err)
+		return output.NewFixablef("JSON 解析失败: %v", "检查 JSON 语法是否正确，可使用 jsonlint.com 在线校验", err).Error()
 	}
 
 	models, hasModels := data["models"].(map[string]any)
 	if !hasModels {
-		return "缺少 models 配置"
+		return output.NewFixable("缺少 models 配置", "在 openclaw.json 中添加 models 配置，或运行 openclaw-install reconfigure 重新生成").Error()
 	}
 	if _, hasProviders := models["providers"]; !hasProviders {
-		return "缺少 models.providers 配置"
+		return output.NewFixable("缺少 models.providers 配置", "在 openclaw.json 的 models 下添加 providers 配置，或运行 openclaw-install reconfigure").Error()
 	}
 
 	return ""
@@ -118,13 +119,13 @@ func validateBridgeFile(path string) string {
 	_, err := config.LoadBridgeConfig(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "文件不存在"
+			return output.NewFixable("文件不存在", "运行 openclaw-install install 以生成 bridge 配置").Error()
 		}
 		errMsg := err.Error()
 		if idx := strings.Index(errMsg, ": "); idx > 0 {
-			return errMsg[idx+2:]
+			return output.NewFixablef("%s", "检查 bridge.json 格式是否正确，或运行 openclaw-install reconfigure 重新生成", errMsg[idx+2:]).Error()
 		}
-		return errMsg
+		return output.NewFixablef("%s", "检查 bridge.json 格式是否正确，或运行 openclaw-install reconfigure 重新生成", errMsg).Error()
 	}
 
 	return ""
@@ -134,13 +135,13 @@ func validateStateFile(path string) string {
 	_, err := config.LoadInstallState(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return "文件不存在"
+			return output.NewFixable("文件不存在", "首次安装前无安装状态文件，属于正常现象").Error()
 		}
 		errMsg := err.Error()
 		if idx := strings.Index(errMsg, ": "); idx > 0 {
-			return errMsg[idx+2:]
+			return output.NewFixablef("%s", "检查 install-state.json 格式是否正确，或删除后重新安装", errMsg[idx+2:]).Error()
 		}
-		return errMsg
+		return output.NewFixablef("%s", "检查 install-state.json 格式是否正确，或删除后重新安装", errMsg).Error()
 	}
 
 	return ""

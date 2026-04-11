@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/goodtiger/openclaw-install/internal/config"
+	"github.com/goodtiger/openclaw-install/internal/doctor"
 	"github.com/goodtiger/openclaw-install/internal/install"
 	"github.com/goodtiger/openclaw-install/internal/system"
 	"github.com/goodtiger/openclaw-install/internal/ui"
@@ -709,7 +710,7 @@ func TestPrintDetectionPreview(t *testing.T) {
 		}
 
 		info := system.Info{}
-		report := install.DoctorReport{
+		report := doctor.RunReport{
 			Info: info,
 		}
 

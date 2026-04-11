@@ -47,6 +47,8 @@ curl -fsSL https://raw.githubusercontent.com/goodtiger/openclaw-install/main/scr
 | `providers list` | 查看供应商 |
 | `validate` | 验证配置 |
 | `upgrade` | 自我升级 |
+| `upgrade --rollback-on-failure` | 升级失败时自动回滚 |
+| `rollback` | 从备份恢复上一个版本 |
 | `bridge serve --channel feishu` | 启动 Bridge |
 
 ## 内置预设
@@ -72,10 +74,33 @@ curl -fsSL https://raw.githubusercontent.com/goodtiger/openclaw-install/main/scr
 
 自动从 GitHub releases 下载最新版本，支持 ghproxy 镜像回退，SHA256 校验，原子替换。
 
+### 自动回滚
+
+使用 `--rollback-on-failure` 标志可在升级失败时自动恢复旧版本：
+
+```bash
+./openclaw-install upgrade --rollback-on-failure
+```
+
+升级器会：
+1. 备份当前版本到 `{binary}.backup`
+2. 安装新版本后执行 `version` 命令验证
+3. 若验证失败，自动恢复备份并提示
+
+### 手动回滚
+
+如需手动恢复备份版本：
+
+```bash
+./openclaw-install rollback
+```
+
 ## 更新日志
 
 ### v0.2.0 — 中国区网络优化
 
+- 🔄 `upgrade` 命令新增 `--rollback-on-failure` 标志，升级失败时自动回滚到旧版本
+- 🔄 新增 `rollback` 命令，支持手动从备份恢复上一个版本
 - 🚀 一键安装脚本 `scripts/install.sh`，支持 ghproxy 镜像回退
 - 🔄 `upgrade` 命令增加 GitHub API 和下载镜像回退（直连 → ghproxy）
 - 🌐 所有 HTTP 客户端支持系统代理（`HTTP_PROXY`/`HTTPS_PROXY`）

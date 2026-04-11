@@ -98,6 +98,72 @@ download_with_fallback() {
   return 1
 }
 
+verify_checksum() {
+  local archive_file="$1"
+  local version="$2"
+
+  local checksum_file="${BINARY_NAME}-${version}-checksums.txt"
+  local tmp_checksum="$archive_file.sha256"
+
+  local sources=(
+    "ghproxy|https://ghproxy.com/https://github.com/${REPO}/releases/download/v${version}/${checksum_file}"
+    "GitHub|https://github.com/${REPO}/releases/download/v${version}/${checksum_file}"
+  )
+
+  local downloaded=false
+  for source_entry in "${sources[@]}"; do
+    local name="${source_entry%%|*}"
+    local url="${source_entry#*|}"
+
+    if curl -fsSL --connect-timeout 10 --max-time 30 "$url" -o "$tmp_checksum" 2>/dev/null; then
+      success "从 $name 下载校验文件成功"
+      downloaded=true
+      break
+    fi
+  done
+
+  if [[ "$downloaded" != true ]]; then
+    warn "无法下载校验文件，跳过 SHA256 校验（安装将继续）"
+    return 0
+  fi
+
+  # 从校验文件中提取当前 archive 的期望 checksum
+  local archive_basename
+  archive_basename="$(basename "$archive_file")"
+  local expected_checksum
+  expected_checksum="$(grep -i "$archive_basename" "$tmp_checksum" | awk '{print $1}' | head -1)"
+
+  rm -f "$tmp_checksum"
+
+  if [[ -z "$expected_checksum" ]]; then
+    warn "校验文件中未找到 $archive_basename 的校验值，跳过校验（安装将继续）"
+    return 0
+  fi
+
+  # 计算实际 checksum
+  local actual_checksum
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual_checksum="$(sha256sum "$archive_file" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual_checksum="$(shasum -a 256 "$archive_file" | awk '{print $1}')"
+  else
+    warn "系统无 sha256sum 或 shasum，跳过校验（安装将继续）"
+    return 0
+  fi
+
+  if [[ "${expected_checksum,,}" == "${actual_checksum,,}" ]]; then
+    success "SHA256 校验通过"
+    return 0
+  else
+    error "SHA256 校验失败！"
+    error "  期望: $expected_checksum"
+    error "  实际: $actual_checksum"
+    error "文件可能被篡改，已删除下载文件"
+    rm -f "$archive_file"
+    return 1
+  fi
+}
+
 install_binary() {
   local version="$1"
   local ext=""
@@ -118,6 +184,12 @@ install_binary() {
 
   if ! download_with_fallback "$archive_file" "$tmp_dir/$archive_file" "$version"; then
     error "所有下载源均失败，请检查网络连接或手动下载: https://github.com/${REPO}/releases"
+    exit 1
+  fi
+
+  # SHA256 校验（下载成功后，解压前）
+  if ! verify_checksum "$tmp_dir/$archive_file" "$version"; then
+    error "校验失败，拒绝安装"
     exit 1
   fi
 

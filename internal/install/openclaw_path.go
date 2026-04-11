@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/goodtiger/openclaw-install/internal/output"
 	"github.com/goodtiger/openclaw-install/internal/system"
 )
 
@@ -26,7 +27,8 @@ func (w *Workflow) resolveNPMExecutable(info system.Info) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("找不到 npm 命令")
+	return "", output.NewFixable("找不到 npm 命令",
+		"1) macOS: brew install node\n2) Linux: sudo apt-get install nodejs npm\n3) 或使用 nvm: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash")
 }
 
 func (w *Workflow) npmGlobalPrefix(ctx context.Context, info system.Info, stderr io.Writer) (string, error) {
@@ -63,7 +65,8 @@ func (w *Workflow) resolveOpenClawWithPath(ctx context.Context, info system.Info
 
 	prefix, err := w.npmGlobalPrefix(ctx, info, stderr)
 	if err != nil {
-		return "", false, fmt.Errorf("找不到 openclaw 命令: %w", err)
+		return "", false, output.NewFixable("找不到 openclaw 命令，且无法确定 npm 全局目录",
+			"1) 确认 npm 已安装: npm --version\n2) 手动安装: npm install -g openclaw\n3) 将 npm bin 目录加入 PATH")
 	}
 
 	candidates := openClawExecutableCandidates(prefix, info.OS)
@@ -73,7 +76,8 @@ func (w *Workflow) resolveOpenClawWithPath(ctx context.Context, info system.Info
 		}
 	}
 
-	return "", false, fmt.Errorf("找不到 openclaw 命令")
+	return "", false, output.NewFixable("找不到 openclaw 命令",
+		"1) 全局安装: npm install -g openclaw\n2) 安装后重启终端或手动加入 PATH: export PATH=$(npm prefix -g)/bin:$PATH")
 }
 
 func openClawExecutableCandidates(prefix, osName string) []string {

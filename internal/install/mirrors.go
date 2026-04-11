@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/goodtiger/openclaw-install/internal/output"
 	"github.com/goodtiger/openclaw-install/internal/shared"
 	"github.com/goodtiger/openclaw-install/presets"
 )
@@ -31,7 +32,7 @@ func (w *Workflow) ResolveMirrors(ctx context.Context) (MirrorSelection, []strin
 
 func (w *Workflow) chooseMirror(ctx context.Context, category string, candidates []presets.MirrorCandidate) (presets.MirrorCandidate, error) {
 	if len(candidates) == 0 {
-		return presets.MirrorCandidate{}, fmt.Errorf("镜像分类 %s 没有候选项", category)
+		return presets.MirrorCandidate{}, output.NewFixablef("镜像分类 %s 没有候选项", "此为内部错误，请提交 issue: https://github.com/goodtiger/openclaw-install/issues", category)
 	}
 
 	for _, candidate := range candidates {
@@ -43,7 +44,8 @@ func (w *Workflow) chooseMirror(ctx context.Context, category string, candidates
 		}
 	}
 
-	return candidates[0], fmt.Errorf("镜像分类 %s 探测失败，已回退到 %s", category, candidates[0].Name)
+	return candidates[0], output.NewFixablef("镜像分类 %s 所有节点探测失败，已回退到 %s",
+		"设置 HTTPS_PROXY 后重试: export HTTPS_PROXY=http://127.0.0.1:7890", category, candidates[0].Name)
 }
 
 func (w *Workflow) probeURL(ctx context.Context, rawURL string) error {

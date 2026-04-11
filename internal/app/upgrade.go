@@ -14,10 +14,14 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
+
+	"github.com/goodtiger/openclaw-install/internal/output"
 )
 
 var osArchMap = map[string]map[string]string{
@@ -43,6 +47,7 @@ var githubDownloadURLs = []string{
 func runUpgrade(args []string, out, errOut io.Writer) error {
 	fs := newFlagSet("upgrade", errOut, "自我更新到最新版本。")
 	forceFlag := fs.Bool("force", false, "即使当前版本已是最新也强制升级")
+	rollbackFlag := fs.Bool("rollback-on-failure", false, "升级失败时自动回滚到旧版本")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -63,7 +68,7 @@ func runUpgrade(args []string, out, errOut io.Writer) error {
 
 	latestVersion, assetName, err := getLatestReleaseInfo(ctx, out)
 	if err != nil {
-		return fmt.Errorf("获取最新版本信息失败: %w", err)
+		return output.WrapFixable(err, "获取最新版本信息失败", "设置 HTTPS_PROXY 环境变量或使用代理后重试，例如: export HTTPS_PROXY=http://127.0.0.1:7890")
 	}
 
 	if latestVersion == currentVersion && !*forceFlag {
@@ -92,22 +97,47 @@ func runUpgrade(args []string, out, errOut io.Writer) error {
 	fmt.Fprintln(out, "下载中...")
 	downloadedFile, err := downloadFileWithFallback(ctx, downloadURL, tmpDir, out)
 	if err != nil {
-		return fmt.Errorf("下载失败: %w", err)
+		return output.WrapFixable(err, "下载失败", "1) 设置 HTTPS_PROXY 代理后重试\n2) 手动下载: https://github.com/goodtiger/openclaw-install/releases 放到临时目录")
 	}
 
 	fmt.Fprintln(out, "验证校验和...")
 	if err := verifyChecksum(downloadedFile, latestVersion, tmpDir, out); err != nil {
-		return fmt.Errorf("校验和验证失败: %w", err)
+		return output.WrapFixable(err, "校验和验证失败", "重新运行 upgrade 下载，或手动从 releases 页下载并校验: https://github.com/goodtiger/openclaw-install/releases")
 	}
 
 	fmt.Fprintln(out, "替换二进制...")
 	newBinaryPath, err := extractBinary(downloadedFile, tmpDir, out)
 	if err != nil {
-		return fmt.Errorf("提取二进制失败: %w", err)
+		return output.WrapFixable(err, "提取二进制失败", "手动下载 https://github.com/goodtiger/openclaw-install/releases 并解压到当前目录")
 	}
 
-	if err := atomicReplaceBinary(newBinaryPath, currentExe, out); err != nil {
-		return fmt.Errorf("替换二进制失败: %w", err)
+	backupPath := currentExe + ".backup"
+	if *rollbackFlag {
+		if err := createBackup(currentExe, backupPath, out); err != nil {
+			return fmt.Errorf("创建备份失败: %w", err)
+		}
+	}
+
+	if err := atomicReplaceBinary(newBinaryPath, currentExe, !*rollbackFlag, out); err != nil {
+		if *rollbackFlag {
+			rollbackFromBackup(backupPath, currentExe, currentVersion, out)
+		}
+		return output.WrapFixable(err, "替换二进制失败", "如果提示权限不足，请将安装器放在有写权限的目录，或使用 sudo 运行")
+	}
+
+	// Verify the new binary works
+	if *rollbackFlag {
+		fmt.Fprintln(out, "验证新版本...")
+		if verifyErr := verifyNewBinary(currentExe); verifyErr != nil {
+			fmt.Fprintf(errOut, "新版本验证失败: %v\n", verifyErr)
+			fmt.Fprintln(out, "正在回滚到旧版本...")
+			if rbErr := rollbackFromBackup(backupPath, currentExe, currentVersion, out); rbErr != nil {
+				return fmt.Errorf("回滚失败: %v (原始错误: %w)", rbErr, verifyErr)
+			}
+			fmt.Fprintf(out, "回滚成功，已恢复 v%s\n", currentVersion)
+			return fmt.Errorf("升级已回滚，新版本验证失败: %w", verifyErr)
+		}
+		fmt.Fprintln(out, "新版本验证通过！")
 	}
 
 	fmt.Fprintln(out, "升级成功！")
@@ -174,7 +204,7 @@ func getLatestReleaseInfo(ctx context.Context, out io.Writer) (string, string, e
 
 		suffix := getOSArchSuffix()
 		if suffix == "" {
-			return "", "", fmt.Errorf("未找到适用于 %s/%s 的资产", runtime.GOOS, runtime.GOARCH)
+			return "", "", output.NewFixablef("未找到适用于 %s/%s 的构建", "前往 https://github.com/goodtiger/openclaw-install/releases 查看支持的平台，或自行编译", runtime.GOOS, runtime.GOARCH)
 		}
 
 		assetName := ""
@@ -186,13 +216,13 @@ func getLatestReleaseInfo(ctx context.Context, out io.Writer) (string, string, e
 		}
 
 		if assetName == "" {
-			return "", "", fmt.Errorf("未找到适用于 %s/%s 的资产", runtime.GOOS, runtime.GOARCH)
+			return "", "", output.NewFixablef("未找到适用于 %s/%s 的 Release 文件", "前往 https://github.com/goodtiger/openclaw-install/releases 手动下载对应平台的压缩包", runtime.GOOS, runtime.GOARCH)
 		}
 
 		return version, assetName, nil
 	}
 
-	return "", "", fmt.Errorf("所有 GitHub 镜像均失败: %w", lastErr)
+	return "", "", fmt.Errorf("所有 GitHub 镜像均失败: %w\n\n💡 设置 HTTPS_PROXY 后重试: export HTTPS_PROXY=http://127.0.0.1:7890\n💡 手动下载: https://github.com/goodtiger/openclaw-install/releases", lastErr)
 }
 
 func getOSArchSuffix() string {
@@ -233,7 +263,7 @@ func downloadFileWithFallback(ctx context.Context, downloadPath string, dir stri
 		fmt.Fprintf(out, "尝试 %s 失败: %v\n", baseURL, err)
 		lastErr = err
 	}
-	return "", fmt.Errorf("所有下载镜像均失败: %w", lastErr)
+	return "", fmt.Errorf("所有下载镜像均失败: %w\n\n💡 设置代理: export HTTPS_PROXY=http://127.0.0.1:7890\n💡 手动下载: https://github.com/goodtiger/openclaw-install/releases", lastErr)
 }
 
 func downloadFile(ctx context.Context, url string, dir string, out io.Writer) (string, error) {
@@ -490,7 +520,7 @@ func extractTarGz(file string, dir string, out io.Writer) (string, error) {
 	return binaryPath, nil
 }
 
-func atomicReplaceBinary(newBinary string, currentExe string, out io.Writer) error {
+func atomicReplaceBinary(newBinary string, currentExe string, keepBackup bool, out io.Writer) error {
 	newDir := filepath.Dir(newBinary)
 	currentDir := filepath.Dir(currentExe)
 
@@ -538,7 +568,9 @@ func atomicReplaceBinary(newBinary string, currentExe string, out io.Writer) err
 		return fmt.Errorf("替换失败: %w", err)
 	}
 
-	os.Remove(backupPath)
+	if !keepBackup {
+		os.Remove(backupPath)
+	}
 
 	return nil
 }
@@ -563,6 +595,139 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return out.Close()
+}
+
+func createBackup(currentExe, backupPath string, out io.Writer) error {
+	if _, err := os.Stat(currentExe); err != nil {
+		return fmt.Errorf("当前二进制不存在: %w", err)
+	}
+
+	info, err := os.Stat(currentExe)
+	if err != nil {
+		return fmt.Errorf("获取当前二进制信息失败: %w", err)
+	}
+
+	freeSpace, err := getFreeSpace(filepath.Dir(backupPath))
+	if err == nil && freeSpace < uint64(info.Size()*2) {
+		return fmt.Errorf("磁盘空间不足，备份需要至少 %d 字节", info.Size())
+	}
+
+	if err := copyFile(currentExe, backupPath); err != nil {
+		return err
+	}
+
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(backupPath, 0755); err != nil {
+			os.Remove(backupPath)
+			return fmt.Errorf("设置备份权限失败: %w", err)
+		}
+	}
+
+	fmt.Fprintf(out, "已创建备份: %s\n", backupPath)
+	return nil
+}
+
+func getFreeSpace(path string) (uint64, error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return 0, err
+	}
+	return stat.Bavail * uint64(stat.Bsize), nil
+}
+
+func verifyNewBinary(binaryPath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, binaryPath, "version")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("执行 version 命令失败: %w (输出: %s)", err, string(output))
+	}
+	return nil
+}
+
+func rollbackFromBackup(backupPath, currentExe, previousVersion string, out io.Writer) error {
+	if _, err := os.Stat(backupPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("备份文件不存在: %s", backupPath)
+		}
+		return fmt.Errorf("备份文件无法访问: %w", err)
+	}
+
+	info, err := os.Stat(backupPath)
+	if err != nil {
+		return fmt.Errorf("获取备份信息失败: %w", err)
+	}
+
+	if info.Size() == 0 {
+		fmt.Fprintf(out, "警告: 备份文件大小为 0，可能已损坏\n")
+	}
+
+	if runtime.GOOS == "windows" {
+		if err := os.Rename(backupPath, currentExe); err != nil {
+			return fmt.Errorf("恢复备份失败: %w", err)
+		}
+	} else {
+		tempPath := currentExe + ".rollback-tmp"
+		if err := os.Rename(currentExe, tempPath); err != nil {
+			return fmt.Errorf("临时移动当前二进制失败: %w", err)
+		}
+		if err := os.Rename(backupPath, currentExe); err != nil {
+			os.Rename(tempPath, currentExe)
+			return fmt.Errorf("恢复备份失败: %w", err)
+		}
+		os.Remove(tempPath)
+	}
+
+	if err := os.Chmod(currentExe, 0755); err != nil {
+		return fmt.Errorf("设置恢复后权限失败: %w", err)
+	}
+
+	return nil
+}
+
+func runRollback(args []string, out, errOut io.Writer) error {
+	fs := newFlagSet("rollback", errOut, "从备份恢复上一个版本。")
+
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+
+	currentExe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("获取当前二进制路径失败: %w", err)
+	}
+
+	backupPath := currentExe + ".backup"
+	if _, err := os.Stat(backupPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("没有可用的备份文件 (%s)", backupPath)
+		}
+		return fmt.Errorf("备份文件无法访问: %w", err)
+	}
+
+	info, err := os.Stat(backupPath)
+	if err != nil {
+		return fmt.Errorf("获取备份信息失败: %w", err)
+	}
+
+	if info.Size() == 0 {
+		fmt.Fprintf(errOut, "警告: 备份文件大小为 0，可能已损坏，是否继续恢复？(y/N) ")
+		fmt.Fprint(errOut, "为安全起见，请手动删除损坏的备份文件后重试\n")
+		return fmt.Errorf("备份文件损坏")
+	}
+
+	fmt.Fprintln(out, "正在从备份恢复...")
+	if err := rollbackFromBackup(backupPath, currentExe, "", out); err != nil {
+		return err
+	}
+
+	fmt.Fprintln(out, "回滚成功！")
+	return nil
 }
 
 func decodeJSON(r io.Reader, v any) error {

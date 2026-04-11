@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,11 +13,14 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/goodtiger/openclaw-install/internal/bridge"
 	"github.com/goodtiger/openclaw-install/internal/config"
+	"github.com/goodtiger/openclaw-install/internal/doctor"
 	"github.com/goodtiger/openclaw-install/internal/install"
+	"github.com/goodtiger/openclaw-install/internal/output"
 	"github.com/goodtiger/openclaw-install/internal/shared"
 	"github.com/goodtiger/openclaw-install/internal/system"
 	"github.com/goodtiger/openclaw-install/internal/ui"
@@ -26,6 +30,42 @@ import (
 // placeholderAPIKey 是配置文件中 API Key 的占位符值。
 // 写入配置前应校验是否仍为该值并提示用户填写。
 const placeholderAPIKey = "YOUR_API_KEY"
+
+// doctorExitCodeError wraps a desired exit code for the doctor command.
+type doctorExitCodeError struct {
+	Code int
+}
+
+func (e doctorExitCodeError) Error() string {
+	return fmt.Sprintf("doctor exit code %d", e.Code)
+}
+
+// doctorCheckResult represents a single environment check in JSON output.
+type doctorCheckResult struct {
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// doctorSummary aggregates check results for JSON output.
+type doctorSummary struct {
+	Total int `json:"total"`
+	Pass  int `json:"pass"`
+	Warn  int `json:"warn"`
+	Fail  int `json:"fail"`
+}
+
+// doctorJSONOutput is the top-level JSON structure for doctor --json output.
+type doctorJSONOutput struct {
+	Timestamp string              `json:"timestamp"`
+	Version   string              `json:"version"`
+	System    string              `json:"system"`
+	Arch      string              `json:"arch"`
+	Mode      string              `json:"recommended_mode"`
+	Checks    []doctorCheckResult `json:"checks"`
+	Summary   doctorSummary       `json:"summary"`
+	Warnings  []string            `json:"warnings"`
+}
 
 func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 	if len(args) == 0 {
@@ -42,54 +82,64 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		return 0
 	case "doctor":
 		if err := runDoctor(args[1:], out, errOut); err != nil {
+			var exitErr doctorExitCodeError
+			if errors.As(err, &exitErr) {
+				return exitErr.Code
+			}
 			fmt.Fprintln(errOut, "doctor 执行失败：", err)
 			return 1
 		}
 		return 0
 	case "install":
 		if err := runInstall(args[1:], in, out, errOut); err != nil {
-			fmt.Fprintln(errOut, "install 执行失败：", err)
+			output.PrintErrorWithFix(errOut, err)
 			return 1
 		}
 		return 0
 	case "reconfigure":
 		if err := runReconfigure(args[1:], in, out, errOut); err != nil {
-			fmt.Fprintln(errOut, "reconfigure 执行失败：", err)
+			output.PrintErrorWithFix(errOut, err)
 			return 1
 		}
 		return 0
 	case "upgrade":
 		if err := runUpgrade(args[1:], out, errOut); err != nil {
-			fmt.Fprintln(errOut, "upgrade 执行失败：", err)
+			output.PrintErrorWithFix(errOut, err)
+			return 1
+		}
+		return 0
+	case "rollback":
+		if err := runRollback(args[1:], out, errOut); err != nil {
+			output.PrintErrorWithFix(errOut, err)
 			return 1
 		}
 		return 0
 	case "validate":
 		if err := runValidate(args[1:], out, errOut); err != nil {
-			fmt.Fprintln(errOut, "validate 执行失败：", err)
+			output.PrintErrorWithFix(errOut, err)
 			return 1
 		}
 		return 0
 	case "bridge":
 		if err := runBridge(args[1:], out, errOut); err != nil {
-			fmt.Fprintln(errOut, "bridge 执行失败：", err)
+			output.PrintErrorWithFix(errOut, err)
 			return 1
 		}
 		return 0
 	case "channels":
 		if err := runChannelsList(args[1:], out, errOut); err != nil {
-			fmt.Fprintln(errOut, "channels 执行失败：", err)
+			output.PrintErrorWithFix(errOut, err)
 			return 1
 		}
 		return 0
 	case "providers":
 		if err := runProvidersList(out); err != nil {
-			fmt.Fprintln(errOut, "providers 执行失败：", err)
+			output.PrintErrorWithFix(errOut, err)
 			return 1
 		}
 		return 0
 	default:
-		fmt.Fprintf(errOut, "未知命令：%s\n\n", args[0])
+		output.ErrorWithFix(errOut, fmt.Sprintf("未知命令：%s", args[0]), "运行 openclaw-install help 查看可用命令列表")
 		printHelp(errOut)
 		return 2
 	}
@@ -98,6 +148,12 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 func runDoctor(args []string, out, errOut io.Writer) error {
 	fs := newFlagSet("doctor", errOut, "检查本机环境、依赖检测结果与镜像可达性。")
 	previewFlag := fs.Bool("preview", false, "预览自动检测的配置值及来源")
+	jsonFlag := fs.Bool("json", false, "输出 JSON 格式结果，适用于 CI/CD 流水线")
+	strictFlag := fs.Bool("strict", false, "任何警告或失败均返回非零退出码")
+	listFlag := fs.Bool("list", false, "列出所有可用检查项")
+	fixFlag := fs.Bool("fix", false, "尝试自动修复失败的检查项")
+	allFlag := fs.Bool("all", false, "运行所有检查项（而非仅默认子集）")
+	checkFlag := fs.String("check", "", "运行指定检查项（逗号分隔）")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -115,17 +171,153 @@ func runDoctor(args []string, out, errOut io.Writer) error {
 		return err
 	}
 
-	workflow := install.NewWorkflow(bundle, install.RealExecutor{})
-	report, err := workflow.Doctor(context.Background(), info)
+	ctx := context.Background()
+
+	if *listFlag {
+		_, err := doctor.RunChecks(ctx, info, bundle, doctor.RunOptions{List: true}, out, errOut)
+		return err
+	}
+
+	var checkNames []string
+	if *checkFlag != "" {
+		for _, name := range strings.Split(*checkFlag, ",") {
+			name = strings.TrimSpace(name)
+			if name != "" {
+				checkNames = append(checkNames, name)
+			}
+		}
+	}
+
+	opts := doctor.RunOptions{
+		CheckNames: checkNames,
+		All:        *allFlag,
+		Fix:        *fixFlag,
+	}
+
+	report, err := doctor.RunChecks(ctx, info, bundle, opts, out, errOut)
 	if err != nil {
 		return err
 	}
+
+	if *fixFlag {
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "修复结果：")
+		for _, o := range report.Outcomes {
+			if o.FixAttempted {
+				if o.FixError != nil {
+					fmt.Fprintf(out, "  - %s: 修复失败 (%v)\n", o.Name, o.FixError)
+				} else {
+					fmt.Fprintf(out, "  - %s: 已修复\n", o.Name)
+				}
+			}
+		}
+	}
+
+	if *jsonFlag {
+		return runDoctorJSON(out, report, *strictFlag)
+	}
+
+	printDoctorReport(out, info, bundle, report)
+
+	if *previewFlag {
+		fmt.Fprintln(out, "")
+		printDetectionPreview(out, bundle, info, report)
+	}
+
+	if hasNonPassOutcomes(report.Outcomes) {
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, "警告：")
+		for _, o := range report.Outcomes {
+			if o.Status != doctor.StatusPass && o.Message != "" {
+				fmt.Fprintf(out, "  - [%s] %s: %s\n", o.Status, o.Name, o.Message)
+			}
+		}
+	}
+
+	if *strictFlag && hasNonPassOutcomes(report.Outcomes) {
+		return doctorExitCodeError{Code: 1}
+	}
+
+	return nil
+}
+
+func runDoctorJSON(out io.Writer, report doctor.RunReport, strict bool) error {
+	checks := make([]doctorCheckResult, 0, len(report.Outcomes))
+	for _, o := range report.Outcomes {
+		checks = append(checks, doctorCheckResult{
+			Name:    o.Name,
+			Status:  string(o.Status),
+			Message: o.Message,
+		})
+	}
+
+	warnings := collectWarnings(report.Outcomes)
+
+	summary := doctorSummary{Total: len(checks)}
+	for _, c := range checks {
+		switch c.Status {
+		case "pass":
+			summary.Pass++
+		case "warn":
+			summary.Warn++
+		case "fail":
+			summary.Fail++
+		}
+	}
+
+	output := doctorJSONOutput{
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Version:   Version,
+		System:    report.Info.OS,
+		Arch:      report.Info.Arch,
+		Mode:      string(install.RecommendedMode(report.Info)),
+		Checks:    checks,
+		Summary:   summary,
+		Warnings:  warnings,
+	}
+
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(output); err != nil {
+		return err
+	}
+
+	if summary.Fail > 0 {
+		return doctorExitCodeError{Code: 1}
+	}
+	if strict && summary.Warn > 0 {
+		return doctorExitCodeError{Code: 1}
+	}
+	return nil
+}
+
+func collectWarnings(outcomes []doctor.CheckOutcome) []string {
+	warnings := []string{}
+	for _, o := range outcomes {
+		if o.Status != doctor.StatusPass && o.Message != "" {
+			warnings = append(warnings, fmt.Sprintf("[%s] %s: %s", o.Status, o.Name, o.Message))
+		}
+	}
+	return warnings
+}
+
+func hasNonPassOutcomes(outcomes []doctor.CheckOutcome) bool {
+	for _, o := range outcomes {
+		if o.Status != doctor.StatusPass && o.Message != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func printDoctorReport(out io.Writer, _ system.Info, _ presets.Bundle, report doctor.RunReport) {
+	recommendedMode := install.RecommendedMode(report.Info)
 
 	fmt.Fprintf(out, "系统：%s/%s\n", report.Info.OS, report.Info.Arch)
 	fmt.Fprintf(out, "OpenClaw 目录：%s\n", report.Info.OpenClawHome)
 	fmt.Fprintf(out, "配置路径：%s\n", report.Info.ConfigPath)
 	fmt.Fprintf(out, "包管理器：%s\n", shared.ValueOrDefault(report.Info.PackageManager, "未检测到"))
-	fmt.Fprintf(out, "推荐模式：%s\n", report.RecommendedMode)
+	fmt.Fprintf(out, "推荐模式：%s\n", recommendedMode)
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "已检测工具：")
 	fmt.Fprintf(out, "  docker: %s\n", boolLabel(report.Info.HasDocker))
@@ -143,28 +335,13 @@ func runDoctor(args []string, out, errOut io.Writer) error {
 	for _, key := range shared.SortedStringKeys(report.MirrorNames) {
 		fmt.Fprintf(out, "  %s：%s\n", key, report.MirrorNames[key])
 	}
-
-	if *previewFlag {
-		fmt.Fprintln(out, "")
-		printDetectionPreview(out, bundle, info, report)
-	}
-
-	if len(report.Warnings) > 0 {
-		fmt.Fprintln(out, "")
-		fmt.Fprintln(out, "警告：")
-		for _, warning := range report.Warnings {
-			fmt.Fprintf(out, "  - %s\n", warning)
-		}
-	}
-	return nil
 }
 
-// printDetectionPreview shows what the auto-detect engine would resolve for each config value.
-func printDetectionPreview(out io.Writer, bundle presets.Bundle, info system.Info, report install.DoctorReport) {
+func printDetectionPreview(out io.Writer, bundle presets.Bundle, info system.Info, report doctor.RunReport) {
 	fmt.Fprintln(out, "检测结果：")
 
-	// Mode
-	fmt.Fprintf(out, "  ├─ 安装模式：    %-16s", report.RecommendedMode)
+	recommendedMode := install.RecommendedMode(report.Info)
+	fmt.Fprintf(out, "  ├─ 安装模式：    %-16s", recommendedMode)
 	if report.Info.DockerHealthy && report.Info.HasCompose {
 		fmt.Fprintln(out, "(检测到 Docker 守护进程)")
 	} else {
@@ -826,12 +1003,20 @@ func printHelp(out io.Writer) {
 	fmt.Fprintln(out, "  install            交互式安装流程")
 	fmt.Fprintln(out, "  doctor             检查本机环境与镜像可达性")
 	fmt.Fprintln(out, "  doctor --preview   预览自动检测的配置值及来源")
+	fmt.Fprintln(out, "  doctor --json      输出 JSON 格式结果（CI/CD 适用）")
+	fmt.Fprintln(out, "  doctor --json --strict  任何警告或失败均返回非零退出码")
+	fmt.Fprintln(out, "  doctor --list      列出所有可用检查项")
+	fmt.Fprintln(out, "  doctor --all       运行所有检查项")
+	fmt.Fprintln(out, "  doctor --fix       尝试自动修复失败的检查项")
+	fmt.Fprintln(out, "  doctor --check=name 运行指定检查项（逗号分隔）")
 	fmt.Fprintln(out, "  reconfigure        不重新安装，只重写 provider/channel 配置")
 	fmt.Fprintln(out, "  bridge serve       启动单个 bridge 通道进程")
 	fmt.Fprintln(out, "  channels list      列出所有可用通道及已启用的通道")
 	fmt.Fprintln(out, "  providers list     列出所有内置供应商预设")
 	fmt.Fprintln(out, "  validate           验证配置文件格式与有效性")
 	fmt.Fprintln(out, "  upgrade            自我更新到最新版本")
+	fmt.Fprintln(out, "  upgrade --rollback-on-failure  升级失败时自动回滚")
+	fmt.Fprintln(out, "  rollback           从备份恢复上一个版本")
 	fmt.Fprintln(out, "  version            输出安装器版本")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "示例：")
@@ -839,6 +1024,8 @@ func printHelp(out io.Writer) {
 	fmt.Fprintln(out, "  openclaw-install install --yes            # 全自动安装")
 	fmt.Fprintln(out, "  openclaw-install doctor --preview         # 预览检测结果")
 	fmt.Fprintln(out, "  openclaw-install bridge serve --channel feishu")
+	fmt.Fprintln(out, "  openclaw-install upgrade --rollback-on-failure  # 带自动回滚的升级")
+	fmt.Fprintln(out, "  openclaw-install rollback                 # 手动恢复备份版本")
 }
 
 func newFlagSet(name string, out io.Writer, summary string) *flag.FlagSet {
