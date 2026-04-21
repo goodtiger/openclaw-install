@@ -95,6 +95,49 @@ func (w *Workflow) provisionPluginChannel(ctx context.Context, info system.Info,
 		return nil
 	}
 
+	// Handle named field config channels (like DingTalk) that use `openclaw config set`
+	if channel.ConfigMethod == "config_set" {
+		w.progressDetailf("正在配置 %s 通道参数", channel.Name)
+
+		// Enable the channel
+		enabledKey := fmt.Sprintf("channels.%s.enabled", channelName)
+		w.progressDetailf("启用 %s 通道", channel.Name)
+		if err := w.runOpenClawCommand(ctx, info, mode, []string{"config", "set", enabledKey, "true"}, stdout, stderr); err != nil {
+			return fmt.Errorf("启用 %s 通道失败: %w", channel.Name, err)
+		}
+
+		// Write credential fields
+		for _, field := range channel.RequiredFields {
+			value := strings.TrimSpace(channel.Fields[field.Key])
+			if value == "" {
+				continue
+			}
+			configKey := fmt.Sprintf("channels.%s.%s", channelName, field.Key)
+			w.progressDetailf("设置 %s", configKey)
+			if err := w.runOpenClawCommand(ctx, info, mode, []string{"config", "set", configKey, value}, stdout, stderr); err != nil {
+				return fmt.Errorf("配置 %s 失败: %w", configKey, err)
+			}
+		}
+
+		// Write access policies
+		if dm := shared.ValueOrDefault(channel.DMPolicy, "open"); dm != "" {
+			dmKey := fmt.Sprintf("channels.%s.dmPolicy", channelName)
+			w.progressDetailf("设置 %s", dmKey)
+			if err := w.runOpenClawCommand(ctx, info, mode, []string{"config", "set", dmKey, dm}, stdout, stderr); err != nil {
+				return fmt.Errorf("配置 %s 失败: %w", dmKey, err)
+			}
+		}
+		if gp := shared.ValueOrDefault(channel.GroupPolicy, "open"); gp != "" {
+			gpKey := fmt.Sprintf("channels.%s.groupPolicy", channelName)
+			w.progressDetailf("设置 %s", gpKey)
+			if err := w.runOpenClawCommand(ctx, info, mode, []string{"config", "set", gpKey, gp}, stdout, stderr); err != nil {
+				return fmt.Errorf("配置 %s 失败: %w", gpKey, err)
+			}
+		}
+
+		return nil
+	}
+
 	args := []string{"channels", "add", "--channel", channelName}
 
 	token := pluginChannelToken(channel)

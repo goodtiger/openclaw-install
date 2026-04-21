@@ -878,6 +878,17 @@ func buildChannelSelections(prompter *ui.Prompter, bundle presets.Bundle, existi
 			return nil, err
 		}
 
+		requiredFields := make([]config.CredentialField, 0, len(preset.RequiredFields))
+		for _, f := range preset.RequiredFields {
+			requiredFields = append(requiredFields, config.CredentialField{
+				Key:      f.Key,
+				Label:    f.Label,
+				Secret:   f.Secret,
+				Optional: f.Optional,
+				EnvKey:   f.EnvKey,
+			})
+		}
+
 		selections = append(selections, config.ChannelSelection{
 			ID:              preset.ID,
 			Name:            preset.Name,
@@ -890,6 +901,8 @@ func buildChannelSelections(prompter *ui.Prompter, bundle presets.Bundle, existi
 			OpenClawChannel: preset.OpenClawChannel,
 			TokenFields:     slices.Clone(preset.TokenFields),
 			LoginRequired:   preset.LoginRequired,
+			ConfigMethod:    preset.ConfigMethod,
+			RequiredFields:  requiredFields,
 			DMPolicy:        dmPolicy,
 			GroupPolicy:     groupPolicy,
 		})

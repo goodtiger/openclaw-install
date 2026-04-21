@@ -47,6 +47,36 @@
       }
     },
     {
+      "id": "dingtalk",
+      "name": "钉钉（DingTalk 插件）",
+      "driver": "dingtalk",
+      "provisioner": "openclaw-plugin",
+      "default_enabled": false,
+      "plugin_package": "@soimy/dingtalk@latest",
+      "openclaw_channel": "dingtalk",
+      "token_fields": [],
+      "config_method": "config_set",
+      "notes": "钉钉企业内部机器人，Stream 模式无需公网 IP。安装后通过 config set 配置 ClientID 和 ClientSecret。",
+      "required_fields": [
+        {
+          "key": "clientId",
+          "label": "钉钉 Client ID（App Key）",
+          "secret": false,
+          "env_key": "OPENCLAW_DINGTALK_CLIENT_ID"
+        },
+        {
+          "key": "clientSecret",
+          "label": "钉钉 Client Secret（App Secret）",
+          "secret": true,
+          "env_key": "OPENCLAW_DINGTALK_CLIENT_SECRET"
+        }
+      ],
+      "defaults": {
+        "dmPolicy": "open",
+        "groupPolicy": "open"
+      }
+    },
+    {
       "id": "feishu",
       "name": "飞书",
       "driver": "feishu",

@@ -34,19 +34,29 @@ type ProviderModel struct {
 }
 
 type ChannelSelection struct {
-	ID              string            `json:"id"`
-	Name            string            `json:"name"`
-	Driver          string            `json:"driver"`
-	Provisioner     string            `json:"provisioner,omitempty"`
-	ListenAddr      string            `json:"listenAddr"`
-	Path            string            `json:"path"`
-	Fields          map[string]string `json:"fields,omitempty"`
-	PluginPackage   string            `json:"pluginPackage,omitempty"`
-	OpenClawChannel string            `json:"openClawChannel,omitempty"`
-	TokenFields     []string          `json:"tokenFields,omitempty"`
-	LoginRequired   bool              `json:"loginRequired,omitempty"`
-	DMPolicy        string            `json:"dmPolicy,omitempty"`
-	GroupPolicy     string            `json:"groupPolicy,omitempty"`
+	ID              string              `json:"id"`
+	Name            string              `json:"name"`
+	Driver          string              `json:"driver"`
+	Provisioner     string              `json:"provisioner,omitempty"`
+	ListenAddr      string              `json:"listenAddr"`
+	Path            string              `json:"path"`
+	Fields          map[string]string   `json:"fields,omitempty"`
+	PluginPackage   string              `json:"pluginPackage,omitempty"`
+	OpenClawChannel string              `json:"openClawChannel,omitempty"`
+	TokenFields     []string            `json:"tokenFields,omitempty"`
+	LoginRequired   bool                `json:"loginRequired,omitempty"`
+	ConfigMethod    string              `json:"configMethod,omitempty"`
+	RequiredFields  []CredentialField   `json:"requiredFields,omitempty"`
+	DMPolicy        string              `json:"dmPolicy,omitempty"`
+	GroupPolicy     string              `json:"groupPolicy,omitempty"`
+}
+
+type CredentialField struct {
+	Key      string `json:"key"`
+	Label    string `json:"label"`
+	Secret   bool   `json:"secret"`
+	Optional bool   `json:"optional,omitempty"`
+	EnvKey   string `json:"env_key,omitempty"`
 }
 
 type ManagedConfigInput struct {
