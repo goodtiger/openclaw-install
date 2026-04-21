@@ -1,5 +1,8 @@
 dist/
 /openclaw-install
+/openclaw-install-static
 /openclaw-install.exe
 *.log
 .DS_Store
+.claude/
+CLAUDE.md

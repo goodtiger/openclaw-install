@@ -11,7 +11,7 @@
 curl -fsSL https://raw.githubusercontent.com/goodtiger/openclaw-install/main/scripts/install.sh | bash
 
 # 指定版本
-curl -fsSL https://raw.githubusercontent.com/goodtiger/openclaw-install/main/scripts/install.sh | bash -s -- --version 0.3.0
+curl -fsSL https://raw.githubusercontent.com/goodtiger/openclaw-install/main/scripts/install.sh | bash -s -- --version 0.3.1
 ```
 
 安装脚本自动检测系统架构，下载对应二进制，执行 SHA256 校验，并添加 PATH 提示。
@@ -93,7 +93,7 @@ openclaw-install install --yes --provider bailian --api-key sk-xxx
 
 **LLM 供应商**：百炼（默认）、DeepSeek、智谱、Kimi、豆包、自定义 OpenAI
 
-**Channel**：微信（默认）、QQ、飞书、企业微信
+**Channel**：微信（默认）、QQ、钉钉、飞书、企业微信
 
 ## 配置产物
 
@@ -112,7 +112,7 @@ openclaw-install install --yes --provider bailian --api-key sk-xxx
 每次执行命令后，安装器会自动检查新版本（24 小时缓存，不阻塞操作）。发现更新时会提示：
 
 ```
-💡 A new version is available: v0.3.0 → v0.3.1
+💡 A new version is available: v0.3.1 → v0.3.2
    Run: openclaw-install upgrade
 ```
 
@@ -162,6 +162,12 @@ openclaw-install install --yes --provider bailian --api-key sk-xxx
 `scripts/install.sh` 支持 SHA256 校验验证，确保下载的归档文件未被篡改。校验失败时拒绝安装。
 
 ## 更新日志
+
+### v0.3.1 — 新增 DingTalk 插件通道
+
+- 新增钉钉（DingTalk）插件通道，支持企业内部机器人 Stream 模式，无需公网 IP
+- 安装流程会自动通过 `openclaw config set` 写入 `clientId`、`clientSecret` 与访问策略
+- 补充钉钉通道预设和对应配置测试
 
 ### v0.3.0 — 体验全面提升
 
@@ -231,4 +237,4 @@ scripts/build-release.sh
 
 ---
 
-**最新版本**: v0.3.0 | [Releases](https://github.com/goodtiger/openclaw-install/releases)
+**最新版本**: v0.3.1 | [Releases](https://github.com/goodtiger/openclaw-install/releases)

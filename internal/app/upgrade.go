@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/goodtiger/openclaw-install/internal/output"
@@ -625,14 +624,6 @@ func createBackup(currentExe, backupPath string, out io.Writer) error {
 
 	fmt.Fprintf(out, "已创建备份: %s\n", backupPath)
 	return nil
-}
-
-func getFreeSpace(path string) (uint64, error) {
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(path, &stat); err != nil {
-		return 0, err
-	}
-	return stat.Bavail * uint64(stat.Bsize), nil
 }
 
 func verifyNewBinary(binaryPath string) error {
