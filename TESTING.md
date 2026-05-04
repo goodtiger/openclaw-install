@@ -621,7 +621,7 @@ systemctl --user stop openclaw-bridge-feishu.service
 systemctl --user stop openclaw-bridge-wecom.service
 ```
 
-QQ 现在走 OpenClaw plugin，不再对应 `openclaw-bridge-qq.service`。如果要停用 QQ，请用 `openclaw channels remove --channel qqbot` 或按你的 OpenClaw 环境方式处理。
+QQ 现在走 OpenClaw plugin，不再对应 `openclaw-bridge-qq.service`。如果是通过安装器启用过的 QQ，后续取消勾选或再次 `reconfigure` 时，安装器会优先尝试 `openclaw channels remove --channel qqbot` 再按当前配置重建；如果自动处理失败，再按你的 OpenClaw 环境方式手动执行。
 
 ## 14. 建议你实际怎么跑第一轮
 

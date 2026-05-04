@@ -11,8 +11,10 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -717,10 +719,18 @@ func runBridgeServe(args []string, out, errOut io.Writer) error {
 		return err
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), bridgeServeSignals()...)
 	defer stop()
 
 	return bridge.Serve(ctx, cfg, *channelFlag, out)
+}
+
+func bridgeServeSignals() []os.Signal {
+	signals := []os.Signal{os.Interrupt}
+	if runtime.GOOS != "windows" {
+		signals = append(signals, syscall.SIGTERM)
+	}
+	return signals
 }
 
 func chooseMode(prompter *ui.Prompter, yes bool, defaultMode install.Mode) (install.Mode, error) {

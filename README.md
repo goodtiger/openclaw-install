@@ -201,7 +201,7 @@ A: 运行 `openclaw-install doctor --preview` 查看镜像探测结果，安装�
 
 **Q: 如何切换 LLM 供应商？**
 
-A: 运行 `openclaw-install reconfigure` 或手动编辑 `~/.openclaw/openclaw.json`。
+A: 运行 `openclaw-install reconfigure` 或手动编辑 `~/.openclaw/openclaw.json`。如果是安装器之前托管的 QQ 插件通道，`reconfigure` 会先尝试移除旧的 `qqbot` channel，再按当前选择重建。
 
 **Q: 微信通道如何配置？**
 
