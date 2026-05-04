@@ -351,7 +351,7 @@ func TestRegisterSystemdUserService(t *testing.T) {
 		t.Error("Service file missing [Service] section")
 	}
 
-	if !strings.Contains(serviceStr, "ExecStart=/path/to/script") {
+	if !strings.Contains(serviceStr, "ExecStart="+systemdQuote("/path/to/script")) {
 		t.Error("Service file missing correct ExecStart path")
 	}
 

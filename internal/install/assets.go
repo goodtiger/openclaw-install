@@ -290,9 +290,6 @@ func (w *Workflow) registerSystemdUserService(ctx context.Context, info system.I
 	if err := validateChannelID(channelID); err != nil {
 		return warnings, err
 	}
-	if !system.HasCommand("systemctl") {
-		return []string{"未找到 systemctl；bridge 服务文件已生成，但尚未激活"}, nil
-	}
 
 	serviceDir := filepath.Join(info.HomeDir, ".config", "systemd", "user")
 	if err := config.EnsureDir(serviceDir); err != nil {
@@ -320,6 +317,10 @@ WantedBy=default.target
 		return warnings, err
 	}
 
+	if !system.HasCommand("systemctl") {
+		return []string{"未找到 systemctl；bridge 服务文件已生成，但尚未激活"}, nil
+	}
+
 	if err := w.runCommand(ctx, "systemctl", []string{"--user", "daemon-reload"}, nil, "", stdout, stderr); err != nil {
 		warnings = append(warnings, "重新加载 systemd user daemon 失败，但 bridge 服务文件已经生成")
 		return warnings, nil
@@ -334,9 +335,6 @@ func (w *Workflow) registerLaunchdService(ctx context.Context, info system.Info,
 	warnings := []string{}
 	if err := validateChannelID(channelID); err != nil {
 		return warnings, err
-	}
-	if !system.HasCommand("launchctl") {
-		return []string{"未找到 launchctl；bridge plist 已生成，但尚未激活"}, nil
 	}
 
 	launchAgentDir := filepath.Join(info.HomeDir, "Library", "LaunchAgents")
@@ -374,6 +372,10 @@ func (w *Workflow) registerLaunchdService(ctx context.Context, info system.Info,
 
 	if err := os.WriteFile(plistPath, []byte(plist), 0o600); err != nil {
 		return warnings, err
+	}
+
+	if !system.HasCommand("launchctl") {
+		return []string{"未找到 launchctl；bridge plist 已生成，但尚未激活"}, nil
 	}
 
 	_ = w.runCommand(ctx, "launchctl", []string{"unload", plistPath}, nil, "", stdout, stderr)

@@ -91,7 +91,7 @@ func TestTargetedCoverageForChannels(t *testing.T) {
 	executor := &recordingExecutor{}
 	workflow := NewWorkflow(presets.Bundle{}, executor)
 
-	err := workflow.provisionPluginChannel(context.Background(), info, ModeNative, channelInvalid, io.Discard, io.Discard)
+	_, err := workflow.provisionPluginChannel(context.Background(), info, ModeNative, channelInvalid, false, io.Discard, io.Discard)
 	// We don't need this to succeed, just need to execute the function path
 	_ = err
 
@@ -104,7 +104,7 @@ func TestTargetedCoverageForChannels(t *testing.T) {
 		Driver:          "test-driver",
 	}
 
-	workflow.provisionPluginChannel(context.Background(), info, ModeNative, channelValid, io.Discard, io.Discard)
+	_, _ = workflow.provisionPluginChannel(context.Background(), info, ModeNative, channelValid, false, io.Discard, io.Discard)
 	// We're only testing coverage, not execution success
 
 	// Test ensureDockerGatewayRunning function
